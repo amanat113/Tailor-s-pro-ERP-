@@ -39,7 +39,7 @@
 'use strict';
 
 const TailorERP = (() => {
-  const VERSION = 'FINAL-ONEFILE-R5.0.0';
+  const VERSION = 'FINAL-ONEFILE-R6-RECAPTCHA-FIX';
   const SHOP_ID = 'default_shop';
   const LS = {
     firebaseConfig: 'tailors.firebaseConfig.v3',
@@ -647,22 +647,47 @@ const TailorERP = (() => {
     }
   }
 
+  function resetRecaptchaVerifier() {
+    try { state.processingNotifyTarget?.clear?.(); } catch (_) {}
+    state.processingNotifyTarget = null;
+    const root = $('recaptcha-container');
+    if (!root) throw new Error('reCAPTCHA container missing. Reload the app.');
+    root.innerHTML = '';
+    const node = document.createElement('div');
+    node.id = `recaptcha-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    root.appendChild(node);
+    return node.id;
+  }
+
   async function sendOtp() {
+    if (state.loading) return toast('Please wait. OTP request is already running.');
     const phoneRaw = clean($('loginPhone').value);
     const role = clean($('loginRole').value);
     const phone = normalizePhone(phoneRaw);
     if (!role) return toast('Please select a role.');
     if (!isValidIndianPhone(phone)) return toast('Enter a valid Indian 10 digit mobile number.');
     if (!state.firebaseReady || !state.auth) return toast('Firebase Auth is not ready. Check internet, Phone Auth, SMS region and authorized domain.');
+    state.loading = true;
+    const btn = $('sendOtpBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending OTP...'; }
     try {
-      if (state.processingNotifyTarget) state.processingNotifyTarget.clear?.();
-      const verifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+      const recaptchaId = resetRecaptchaVerifier();
+      const verifier = new firebase.auth.RecaptchaVerifier(recaptchaId, { size: 'invisible' });
       state.processingNotifyTarget = verifier;
+      await verifier.render();
       state.confirmationResult = await state.auth.signInWithPhoneNumber(phone, verifier);
       otpModal(phone, role);
     } catch (error) {
+      try { state.processingNotifyTarget?.clear?.(); } catch (_) {}
+      state.processingNotifyTarget = null;
+      const root = $('recaptcha-container');
+      if (root) root.innerHTML = '';
       const msg = firebaseFriendlyError(error);
       toast(`Firebase: ${msg}`);
+    } finally {
+      state.loading = false;
+      const latestBtn = $('sendOtpBtn');
+      if (latestBtn) { latestBtn.disabled = false; latestBtn.textContent = 'Send Real OTP'; }
     }
   }
 
