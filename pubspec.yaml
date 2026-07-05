@@ -1,0 +1,31 @@
+name: tailors_erp
+description: Tailor's ERP - professional Android tailoring and garment management app.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.9.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: '>=3.7.0 <5.0.0'
+  firebase_auth: '>=5.1.0 <7.0.0'
+  cloud_firestore: '>=5.6.0 <7.0.0'
+  firebase_storage: '>=12.4.0 <14.0.0'
+  shared_preferences: ^2.5.4
+  crypto: ^3.0.6
+  intl: ^0.20.2
+  url_launcher: ^6.3.1
+  connectivity_plus: ^6.1.4
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_name:
+  name: "Tailor's ERP"
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: '>=5.0.0 <7.0.0'
