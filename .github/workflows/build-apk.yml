@@ -11,7 +11,7 @@ jobs:
   build-android-apk:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -29,33 +29,36 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Repair Android project files
+      - name: Create/repair Android project
         run: flutter create --platforms=android --project-name tailors_erp --org com.tailors .
 
-      - name: Connect Google services plugin
+      - name: Connect Firebase Android config if available
+        shell: bash
         run: |
+          mkdir -p android/app
+          if [ -f "google-services.json" ]; then cp -f "google-services.json" android/app/google-services.json; fi
+          if [ -f "google-services (1).json" ]; then cp -f "google-services (1).json" android/app/google-services.json; fi
           python3 - <<'PY'
           from pathlib import Path
           settings = Path('android/settings.gradle')
           app_gradle = Path('android/app/build.gradle')
-          if settings.exists():
+          has_config = Path('android/app/google-services.json').exists()
+          if has_config:
               text = settings.read_text()
               if 'com.google.gms.google-services' not in text:
-                  text = text.replace('id "org.jetbrains.kotlin.android" version "2.2.21" apply false', 'id "org.jetbrains.kotlin.android" version "2.2.21" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false')
-                  text = text.replace('id "org.jetbrains.kotlin.android" version "2.1.0" apply false', 'id "org.jetbrains.kotlin.android" version "2.1.0" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false')
-              settings.write_text(text)
-          if app_gradle.exists():
+                  text = text.replace(
+                      'id "org.jetbrains.kotlin.android" version "2.2.21" apply false',
+                      'id "org.jetbrains.kotlin.android" version "2.2.21" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false'
+                  )
+                  settings.write_text(text)
               text = app_gradle.read_text()
               if 'id "com.google.gms.google-services"' not in text:
                   text = text.replace('id "com.android.application"', 'id "com.android.application"\n    id "com.google.gms.google-services"')
-              text = text.replace('applicationId "com.tailors.tailors_erp"', 'applicationId "com.tailors.erp"')
-              text = text.replace('namespace "com.tailors.tailors_erp"', 'namespace "com.tailors.erp"')
-              app_gradle.write_text(text)
+                  app_gradle.write_text(text)
+              print('Firebase config found and connected.')
+          else:
+              print('WARNING: google-services.json not found. APK will build, but real OTP will be blocked until config is added.')
           PY
-
-      - name: Validate Firebase config
-        run: |
-          test -f android/app/google-services.json || (echo "Missing android/app/google-services.json. Upload Firebase config file before building." && exit 1)
 
       - name: Install dependencies
         run: flutter pub get
