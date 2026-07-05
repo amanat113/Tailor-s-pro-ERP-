@@ -35,79 +35,38 @@ jobs:
       - name: Create or repair Android project
         run: flutter create --platforms=android --project-name tailors_erp --org com.tailors --overwrite .
 
-      - name: Connect Firebase Android config and package name
+      - name: Force Android package name
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p android/app
-
-          if [ -f "google-services.json" ]; then
-            cp -f "google-services.json" android/app/google-services.json
-          elif [ -f "google-services (1).json" ]; then
-            cp -f "google-services (1).json" android/app/google-services.json
-          else
-            echo "Missing google-services.json at repo root. Upload Firebase config before building."
-            exit 1
-          fi
-
           python3 - <<'PY'
           from pathlib import Path
           import re
 
           package_name = "com.tailors.erp"
-
-          settings_groovy = Path("android/settings.gradle")
-          settings_kts = Path("android/settings.gradle.kts")
           app_groovy = Path("android/app/build.gradle")
           app_kts = Path("android/app/build.gradle.kts")
-
-          if not settings_groovy.exists() and not settings_kts.exists():
-              raise SystemExit("No Android settings.gradle or settings.gradle.kts found after flutter create.")
-
-          if not app_groovy.exists() and not app_kts.exists():
-              raise SystemExit("No Android app build.gradle or build.gradle.kts found after flutter create.")
-
-          if settings_groovy.exists():
-              text = settings_groovy.read_text()
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
-                      'id "org.jetbrains.kotlin.android" version "2.2.21" apply false',
-                      'id "org.jetbrains.kotlin.android" version "2.2.21" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false'
-                  )
-              settings_groovy.write_text(text)
-
-          if settings_kts.exists():
-              text = settings_kts.read_text()
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
-                      'id("org.jetbrains.kotlin.android") version "2.2.21" apply false',
-                      'id("org.jetbrains.kotlin.android") version "2.2.21" apply false\n    id("com.google.gms.google-services") version "4.4.3" apply false'
-                  )
-              settings_kts.write_text(text)
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
 
           if app_groovy.exists():
               text = app_groovy.read_text()
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
-                      'id "com.android.application"',
-                      'id "com.android.application"\n    id "com.google.gms.google-services"'
-                  )
               text = re.sub(r'namespace\s+"[^"]+"', f'namespace "{package_name}"', text)
               text = re.sub(r'applicationId\s+"[^"]+"', f'applicationId "{package_name}"', text)
               app_groovy.write_text(text)
+              print("Updated Groovy Android build file")
 
           if app_kts.exists():
               text = app_kts.read_text()
-              if "com.google.gms.google-services" not in text:
-                  text = text.replace(
-                      'id("com.android.application")',
-                      'id("com.android.application")\n    id("com.google.gms.google-services")'
-                  )
               text = re.sub(r'namespace\s*=\s*"[^"]+"', f'namespace = "{package_name}"', text)
               text = re.sub(r'applicationId\s*=\s*"[^"]+"', f'applicationId = "{package_name}"', text)
               app_kts.write_text(text)
+              print("Updated Kotlin Android build file")
 
-          print("Firebase config connected and Android package set to com.tailors.erp.")
+          if manifest.exists():
+              text = manifest.read_text()
+              text = text.replace('android:label="tailors_erp"', 'android:label="Tailor\'s ERP"')
+              text = text.replace('android:label="Tailors_erp"', 'android:label="Tailor\'s ERP"')
+              manifest.write_text(text)
           PY
 
       - name: Install dependencies

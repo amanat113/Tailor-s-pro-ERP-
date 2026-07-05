@@ -153,7 +153,15 @@ class AppState extends ChangeNotifier {
 
   Future<void> bootstrap() async {
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp(
+        options: const FirebaseOptions(
+          apiKey: 'AIzaSyBFnG9Mxeg2RwTIS0Ea8lrCs2puUINeT6I',
+          appId: '1:644724160636:android:da3b4b805926c982c571f9',
+          messagingSenderId: '644724160636',
+          projectId: 'tailors-erp1',
+          storageBucket: 'tailors-erp1.firebasestorage.app',
+        ),
+      );
       FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true, cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED);
       firebaseReady = true;
       firebaseMessage = 'Firebase connected';
