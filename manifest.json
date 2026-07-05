@@ -1,0 +1,16 @@
+{
+  "name": "Tailor's ERP",
+  "short_name": "Tailor ERP",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8f5ef",
+  "theme_color": "#0f172a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%230f172a'/%3E%3Cpath d='M28 38h72v14H77v48H61V52H28z' fill='%23c49a5a'/%3E%3Cpath d='M91 62c-8 18-24 21-39 10 10 25 45 25 54-7z' fill='%23fff' opacity='.85'/%3E%3C/svg%3E",
+      "sizes": "128x128",
+      "type": "image/svg+xml"
+    }
+  ]
+}
