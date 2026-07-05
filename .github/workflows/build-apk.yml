@@ -29,21 +29,23 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Show Flutter version
-        run: flutter --version
+      - name: Show Flutter doctor
+        run: flutter doctor -v
 
-      - name: Repair/create missing Android project files
-        run: flutter create --platforms=android --project-name tailors_erp --org com.tailors .
+      - name: Recreate clean Android project
+        run: |
+          rm -rf android
+          flutter create --platforms=android --project-name tailors_erp --org com.tailors .
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build release APK
-        run: flutter build apk --release
+      - name: Build debug APK for testing
+        run: flutter build apk --debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tailors-erp-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: tailors-erp-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
