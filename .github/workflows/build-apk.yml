@@ -29,31 +29,39 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Show Flutter doctor
-        run: flutter doctor -v
+      - name: Repair Android project files
+        run: flutter create --platforms=android --project-name tailors_erp --org com.tailors .
 
-      - name: Recreate clean Android project
+      - name: Connect Google services plugin
         run: |
-          rm -rf android
-          flutter create --platforms=android --project-name tailors_erp --org com.tailors .
+          python3 - <<'PY'
+          from pathlib import Path
+          settings = Path('android/settings.gradle')
+          app_gradle = Path('android/app/build.gradle')
+          if settings.exists():
+              text = settings.read_text()
+              if 'com.google.gms.google-services' not in text:
+                  text = text.replace('id "org.jetbrains.kotlin.android" version "2.2.21" apply false', 'id "org.jetbrains.kotlin.android" version "2.2.21" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false')
+                  text = text.replace('id "org.jetbrains.kotlin.android" version "2.1.0" apply false', 'id "org.jetbrains.kotlin.android" version "2.1.0" apply false\n    id "com.google.gms.google-services" version "4.4.3" apply false')
+              settings.write_text(text)
+          if app_gradle.exists():
+              text = app_gradle.read_text()
+              if 'id "com.google.gms.google-services"' not in text:
+                  text = text.replace('id "com.android.application"', 'id "com.android.application"\n    id "com.google.gms.google-services"')
+              text = text.replace('applicationId "com.tailors.tailors_erp"', 'applicationId "com.tailors.erp"')
+              text = text.replace('namespace "com.tailors.tailors_erp"', 'namespace "com.tailors.erp"')
+              app_gradle.write_text(text)
+          PY
+
+      - name: Validate Firebase config
+        run: |
+          test -f android/app/google-services.json || (echo "Missing android/app/google-services.json. Upload Firebase config file before building." && exit 1)
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build debug APK for testing
-        env:
-          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-          FIREBASE_APP_ID_ANDROID: ${{ secrets.FIREBASE_APP_ID_ANDROID }}
-          FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-        run: |
-          flutter build apk --debug \
-            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
-            --dart-define=FIREBASE_APP_ID_ANDROID="$FIREBASE_APP_ID_ANDROID" \
-            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
-            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
-            --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET"
+      - name: Build debug APK
+        run: flutter build apk --debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

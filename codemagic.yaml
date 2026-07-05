@@ -1,5 +1,5 @@
 workflows:
-  android-release-apk:
+  android-debug-apk:
     name: Tailor's ERP Android APK
     max_build_duration: 45
     instance_type: linux_x2
@@ -7,13 +7,13 @@ workflows:
       flutter: stable
       java: 17
     scripts:
-      - name: Show Flutter version
-        script: flutter --version
-      - name: Repair/create missing Android project files
+      - name: Repair Android project files
         script: flutter create --platforms=android --project-name tailors_erp --org com.tailors .
+      - name: Validate Firebase config
+        script: test -f android/app/google-services.json || (echo "Missing android/app/google-services.json" && exit 1)
       - name: Install dependencies
         script: flutter pub get
-      - name: Build release APK
-        script: flutter build apk --release
+      - name: Build debug APK
+        script: flutter build apk --debug
     artifacts:
-      - build/app/outputs/flutter-apk/app-release.apk
+      - build/app/outputs/flutter-apk/app-debug.apk
