@@ -1,56 +1,156 @@
 'use strict';
 
-const App = (() => {
-  const VERSION = 'PWA-ZERO-1.0.0';
+const TailorERP = (() => {
+  const VERSION = 'PWA-LOGIC-FIXED-R3.0.0';
   const SHOP_ID = 'default_shop';
   const LS = {
-    firebaseConfig: 'tailors.firebaseConfig.v1', session: 'tailors.session.v1',
-    orders: 'tailors.orders.v1', staff: 'tailors.staff.v1', staffLedger: 'tailors.staffLedger.v1',
-    settings: 'tailors.settings.v1', deliveries: 'tailors.deliveries.v1'
+    firebaseConfig: 'tailors.firebaseConfig.v3',
+    profile: 'tailors.profile.v3',
+    unlock: 'tailors.unlock.v3',
+    orders: 'tailors.orders.v3',
+    staff: 'tailors.staff.v3',
+    staffLedger: 'tailors.staffLedger.v3',
+    deliveries: 'tailors.deliveries.v3',
+    settings: 'tailors.settings.v3'
   };
   const DEFAULT_SETTINGS = {
-    shopName: "Tailor's ERP", address: '', phone: '', slipText: 'Thank you for your order.',
-    measurements: ['Length','Chest','Waist','Shoulder','Sleeve']
+    shopName: "Tailor's ERP",
+    address: '',
+    phone: '',
+    slipText: 'Thank you for your order.',
+    measurements: [],
+    workTypes: []
   };
   const state = {
-    view: 'dashboard', user: null, role: 'Owner', drawer: false, loading: false,
-    firebaseReady: false, auth: null, db: null, confirmationResult: null,
-    orders: [], staff: [], staffLedger: [], deliveries: [], settings: DEFAULT_SETTINGS,
-    search: '', activeOrderId: null
+    ready: false,
+    loading: false,
+    firebaseReady: false,
+    auth: null,
+    db: null,
+    firebaseUser: null,
+    profile: null,
+    unlocked: false,
+    view: 'home',
+    drawer: false,
+    orders: [],
+    staff: [],
+    staffLedger: [],
+    deliveries: [],
+    settings: structuredClone(DEFAULT_SETTINGS),
+    search: { home: '', process: '', delivery: '' },
+    selected: { processOrderId: '', deliveryOrderId: '', staffId: '' },
+    confirmationResult: null,
+    processingNotifyTarget: null
   };
 
   const $ = (id) => document.getElementById(id);
   const app = () => $('app');
-  const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-  const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+  const modalRoot = () => $('modal-root');
+  const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+  const clean = (value) => String(value ?? '').trim();
+  const num = (value) => {
+    const n = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const nowISO = () => new Date().toISOString();
-  const money = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
-  const today = () => new Date().toISOString().slice(0, 10);
-  const read = (key, fallback) => { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch { return fallback; } };
-  const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+  const money = (value) => `₹${num(value).toLocaleString('en-IN')}`;
+  const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '-';
+  const todayISO = () => new Date().toISOString().slice(0, 10);
+  const deepClone = (v) => JSON.parse(JSON.stringify(v));
   const normalizePhone = (phone) => {
-    const digits = String(phone || '').replace(/\D/g, '');
+    const raw = String(phone || '').trim();
+    const digits = raw.replace(/\D/g, '');
+    if (raw.startsWith('+')) return `+${digits}`;
     if (digits.length === 10) return `+91${digits}`;
     if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
-    if (String(phone).startsWith('+')) return String(phone).trim();
     return `+${digits}`;
   };
-  const isValidPhone = (phone) => /^\+91\d{10}$/.test(normalizePhone(phone));
-  const byDateDesc = (a,b) => String(b.updatedAt || b.createdAt).localeCompare(String(a.updatedAt || a.createdAt));
-  const toast = (msg) => { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(()=>t.classList.remove('show'), 2600); };
-  const setView = (view) => { state.view = view; state.drawer = false; render(); };
+  const isValidIndianPhone = (phone) => /^\+91[6-9]\d{9}$/.test(normalizePhone(phone));
+  const read = (key, fallback) => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const write = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+  const remove = (key) => localStorage.removeItem(key);
+  const byDateDesc = (a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+  const toast = (message) => {
+    const node = $('toast');
+    node.textContent = message;
+    node.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => node.classList.remove('show'), 3300);
+  };
+  const setView = (view) => {
+    state.view = view;
+    state.drawer = false;
+    state.selected.processOrderId = '';
+    state.selected.deliveryOrderId = '';
+    render();
+  };
+
+  async function sha256(text) {
+    const data = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
 
   function loadLocal() {
-    state.orders = read(LS.orders, []);
-    state.staff = read(LS.staff, []);
-    state.staffLedger = read(LS.staffLedger, []);
-    state.deliveries = read(LS.deliveries, []);
-    state.settings = { ...DEFAULT_SETTINGS, ...read(LS.settings, DEFAULT_SETTINGS) };
-    state.user = read(LS.session, null);
+    state.orders = read(LS.orders, []).sort(byDateDesc).map(normalizeOrder);
+    state.staff = read(LS.staff, []).sort(byDateDesc);
+    state.staffLedger = read(LS.staffLedger, []).sort(byDateDesc);
+    state.deliveries = read(LS.deliveries, []).sort(byDateDesc);
+    state.settings = { ...deepClone(DEFAULT_SETTINGS), ...read(LS.settings, {}) };
+    state.settings.measurements = Array.isArray(state.settings.measurements) ? state.settings.measurements : [];
+    state.settings.workTypes = Array.isArray(state.settings.workTypes) ? state.settings.workTypes : [];
+    state.profile = read(LS.profile, null);
+    const unlock = read(LS.unlock, null);
+    state.unlocked = Boolean(unlock && state.profile && unlock.uid === state.profile.uid && Date.now() < unlock.validUntil);
   }
-  function persistAll() {
-    write(LS.orders, state.orders); write(LS.staff, state.staff); write(LS.staffLedger, state.staffLedger);
-    write(LS.deliveries, state.deliveries); write(LS.settings, state.settings);
+
+  function persistLocal() {
+    write(LS.orders, state.orders);
+    write(LS.staff, state.staff);
+    write(LS.staffLedger, state.staffLedger);
+    write(LS.deliveries, state.deliveries);
+    write(LS.settings, state.settings);
+  }
+
+  function normalizeOrder(order) {
+    const qty = Math.max(0, num(order.clothQty));
+    const existingItems = Array.isArray(order.items) ? order.items : [];
+    const items = Array.from({ length: qty }, (_, index) => {
+      const item = existingItems[index] || {};
+      return { no: index + 1, status: item.status || 'pending' };
+    });
+    const deliveredQty = items.filter((item) => item.status === 'delivered').length;
+    const readyQty = items.filter((item) => item.status === 'ready').length;
+    const processingQty = items.filter((item) => item.status === 'processing').length;
+    const pendingQty = items.filter((item) => item.status === 'pending').length;
+    const status = deliveredQty === qty && qty > 0
+      ? 'delivered'
+      : deliveredQty > 0
+        ? 'partial_delivered'
+        : readyQty === qty && qty > 0
+          ? 'ready'
+          : (processingQty > 0 || readyQty > 0) ? 'processing' : 'pending';
+    return {
+      ...order,
+      clothQty: qty,
+      bill: num(order.bill),
+      advance: num(order.advance),
+      due: Math.max(0, num(order.bill) - num(order.advance) - num(order.deliveryPaidTotal || 0)),
+      items,
+      deliveredQty,
+      readyQty,
+      processingQty,
+      pendingQty,
+      status
+    };
   }
 
   async function initFirebase() {
@@ -58,223 +158,933 @@ const App = (() => {
     if (!cfg || !cfg.apiKey || !window.firebase) return false;
     try {
       if (!firebase.apps.length) firebase.initializeApp(cfg);
-      state.auth = firebase.auth(); state.db = firebase.firestore();
+      state.auth = firebase.auth();
+      await state.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      state.db = firebase.firestore();
       state.db.enablePersistence({ synchronizeTabs: true }).catch(() => null);
       state.firebaseReady = true;
       state.auth.onAuthStateChanged(async (user) => {
+        state.firebaseUser = user;
         if (user) {
-          state.user = { uid: user.uid, phone: user.phoneNumber, role: state.role, loginAt: nowISO() };
-          write(LS.session, state.user);
-          await syncDown(); render();
+          if (!state.profile || state.profile.uid !== user.uid) {
+            const saved = read(LS.profile, null);
+            state.profile = saved && saved.uid === user.uid ? saved : null;
+          }
+          await syncDown();
+        } else {
+          state.profile = null;
+          state.unlocked = false;
         }
+        render();
       });
       return true;
-    } catch (err) {
-      console.error(err); toast(`Firebase error: ${err.message || err}`); return false;
+    } catch (error) {
+      console.error(error);
+      toast(`Firebase error: ${error.message || error}`);
+      return false;
     }
+  }
+
+  function collection(name) {
+    if (!state.db || !state.firebaseUser) return null;
+    return state.db.collection('shops').doc(SHOP_ID).collection(name);
   }
 
   async function syncDown() {
-    if (!state.firebaseReady || !state.user) return;
+    if (!state.firebaseReady || !state.firebaseUser) return;
     try {
-      const base = state.db.collection('shops').doc(SHOP_ID);
       const [orders, staff, ledger, deliveries, settingsDoc] = await Promise.all([
-        base.collection('orders').get(), base.collection('staff').get(), base.collection('staffLedger').get(),
-        base.collection('deliveries').get(), base.collection('settings').doc('main').get()
+        collection('orders').get(),
+        collection('staff').get(),
+        collection('staffLedger').get(),
+        collection('deliveries').get(),
+        state.db.collection('shops').doc(SHOP_ID).collection('settings').doc('main').get()
       ]);
-      state.orders = orders.docs.map(d => ({ id: d.id, ...d.data() })).sort(byDateDesc);
-      state.staff = staff.docs.map(d => ({ id: d.id, ...d.data() })).sort(byDateDesc);
-      state.staffLedger = ledger.docs.map(d => ({ id: d.id, ...d.data() })).sort(byDateDesc);
-      state.deliveries = deliveries.docs.map(d => ({ id: d.id, ...d.data() })).sort(byDateDesc);
-      if (settingsDoc.exists) state.settings = { ...DEFAULT_SETTINGS, ...settingsDoc.data() };
-      persistAll();
-    } catch (err) { console.warn('syncDown failed', err); }
+      state.orders = orders.docs.map((d) => normalizeOrder({ id: d.id, ...d.data() })).sort(byDateDesc);
+      state.staff = staff.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byDateDesc);
+      state.staffLedger = ledger.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byDateDesc);
+      state.deliveries = deliveries.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byDateDesc);
+      if (settingsDoc.exists) {
+        state.settings = { ...deepClone(DEFAULT_SETTINGS), ...settingsDoc.data() };
+        state.settings.measurements = Array.isArray(state.settings.measurements) ? state.settings.measurements : [];
+        state.settings.workTypes = Array.isArray(state.settings.workTypes) ? state.settings.workTypes : [];
+      }
+      persistLocal();
+    } catch (error) {
+      console.warn('syncDown failed', error);
+    }
   }
-  async function upsert(collection, item) {
-    persistAll();
-    if (!state.firebaseReady || !state.user) return;
-    const base = state.db.collection('shops').doc(SHOP_ID);
-    await base.collection(collection).doc(item.id).set(item, { merge: true });
+
+  async function pushDoc(name, item) {
+    persistLocal();
+    if (!state.firebaseReady || !state.firebaseUser) return;
+    const ref = collection(name);
+    if (ref) await ref.doc(item.id).set(item, { merge: true });
   }
+
+  async function deleteDoc(name, id) {
+    persistLocal();
+    if (!state.firebaseReady || !state.firebaseUser) return;
+    const ref = collection(name);
+    if (ref) await ref.doc(id).delete();
+  }
+
   async function saveSettings() {
     write(LS.settings, state.settings);
-    if (state.firebaseReady && state.user) await state.db.collection('shops').doc(SHOP_ID).collection('settings').doc('main').set(state.settings, { merge: true });
+    if (state.firebaseReady && state.firebaseUser) {
+      await state.db.collection('shops').doc(SHOP_ID).collection('settings').doc('main').set(state.settings, { merge: true });
+    }
+  }
+
+  function unlockMs(role) {
+    return role === 'Staff' ? 24 * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
+  }
+
+  function shell(content) {
+    return `<div class="layout">
+      <div class="topbar">
+        <button class="icon-btn" id="drawerBtn" aria-label="Open menu">☰</button>
+        <div><h1>${esc(state.settings.shopName || "Tailor's ERP")}</h1><small>${esc(state.profile?.role || '')} ${state.firebaseReady ? '• Cloud ready' : '• Local mode'}</small></div>
+        <div class="spacer"></div>
+        <button class="icon-btn" id="syncBtn" aria-label="Sync">↻</button>
+      </div>
+      ${content}
+    </div>
+    ${drawerHtml()}
+    ${bottomNavHtml()}`;
+  }
+
+  function drawerHtml() {
+    if (!state.drawer) return '';
+    const items = [
+      ['home', '🏠', 'Home'], ['new', '➕', 'New Order'], ['process', '✂️', 'Processing'], ['delivery', '🚚', 'Delivery'],
+      ['staff', '👥', 'Staff Ledger'], ['settings', '⚙️', 'Settings']
+    ];
+    return `<div class="drawer-backdrop" id="drawerBackdrop"></div><aside class="drawer">
+      <div class="brand"><div class="logo">TE</div><div><h1>${esc(state.settings.shopName || "Tailor's ERP")}</h1><p>${esc(state.profile?.phone || '')}</p></div></div>
+      ${items.map(([view, icon, label]) => `<button class="drawer-btn ${state.view === view ? 'active' : ''}" data-nav="${view}"><span>${icon}</span>${label}</button>`).join('')}
+      <div class="divider"></div>
+      <button class="drawer-btn" id="lockBtn">🔐 Lock with PIN</button>
+      <button class="drawer-btn danger" id="logoutBtn">↪ Logout</button>
+      <p class="tiny">Version ${VERSION}</p>
+    </aside>`;
+  }
+
+  function bottomNavHtml() {
+    const items = [
+      ['home', '🏠', 'Home'],
+      ['process', '✂️', 'Process'],
+      ['new', '+', ''],
+      ['delivery', '🚚', 'Delivery'],
+      ['staff', '👥', 'Staff']
+    ];
+    return `<nav class="bottom-nav" aria-label="Main navigation">
+      ${items.map(([view, icon, label]) => view === 'new'
+        ? `<button class="nav-item new ${state.view === view ? 'active' : ''}" data-nav="${view}" aria-label="New Order"><span class="circle">${icon}</span><span>${label}</span></button>`
+        : `<button class="nav-item ${state.view === view ? 'active' : ''}" data-nav="${view}"><span class="ico">${icon}</span><span>${label}</span></button>`).join('')}
+    </nav>`;
   }
 
   function authScreen() {
-    const hasConfig = !!read(LS.firebaseConfig, null);
+    const hasConfig = Boolean(read(LS.firebaseConfig, null));
     return `<main class="auth-page"><section class="auth-card">
       <div class="brand"><div class="logo">TE</div><div><h1>Tailor's ERP</h1><p>Professional tailoring management</p></div></div>
-      ${!hasConfig ? `<div class="error">Firebase Web config is required for real OTP. No demo OTP.</div>` : ''}
+      ${!hasConfig ? '<div class="warning">Firebase Web config is required. No demo OTP.</div>' : ''}
       <div class="stack">
-        <label><span class="label">Mobile Number</span><input id="loginPhone" inputmode="tel" placeholder="10 digit mobile" /></label>
+        <label><span class="label">Mobile Number</span><input id="loginPhone" inputmode="tel" autocomplete="tel" placeholder="10 digit mobile" /></label>
         <label><span class="label">Role</span><select id="loginRole"><option value="">Select Role</option><option>Owner</option><option>Manager</option><option>Staff</option></select></label>
         <button class="btn" id="sendOtpBtn">Send Real OTP</button>
         <button class="btn secondary" id="setupFirebaseBtn">Firebase Setup</button>
-        <p class="hint">This build has no fake/demo login. Add Firebase Web config, enable Phone Auth, and add your GitHub Pages domain in Firebase Authorized Domains.</p>
-      </div></section></main>`;
-  }
-  function otpModal(phone) {
-    showModal(`<div class="modal-head"><h3>Verify OTP</h3><button class="icon-btn" data-close>×</button></div>
-      <div class="form-grid"><div class="info">OTP sent to ${esc(phone)}</div><input id="otpCode" inputmode="numeric" placeholder="Enter OTP" />
-      <input id="pinCode" inputmode="numeric" placeholder="Create / enter 4-8 digit PIN" />
-      <button class="btn" id="verifyOtpBtn">Verify & Login</button></div>`);
-    $('verifyOtpBtn').onclick = verifyOtp;
-  }
-  function firebaseSetupModal() {
-    const current = JSON.stringify(read(LS.firebaseConfig, {}), null, 2);
-    showModal(`<div class="modal-head"><h3>Firebase Web Config</h3><button class="icon-btn" data-close>×</button></div>
-    <div class="form-grid"><p class="hint">Firebase Console → Project settings → Your apps → Web app → SDK setup config. Paste the JSON object here.</p>
-    <textarea id="firebaseJson" spellcheck="false">${esc(current === '{}' ? '' : current)}</textarea>
-    <button class="btn" id="saveFirebaseCfg">Save Firebase Config</button></div>`);
-    $('saveFirebaseCfg').onclick = async () => {
-      try { const cfg = JSON.parse($('firebaseJson').value); write(LS.firebaseConfig, cfg); closeModal(); await initFirebase(); toast('Firebase config saved.'); render(); }
-      catch { toast('Invalid JSON config.'); }
-    };
-  }
-  async function sendOtp() {
-    const phone = normalizePhone($('loginPhone').value); const role = $('loginRole').value;
-    if (!isValidPhone(phone)) return toast('Enter valid Indian mobile number.');
-    if (!role) return toast('Select role first.');
-    if (!state.firebaseReady) { await initFirebase(); }
-    if (!state.firebaseReady || !state.auth) return firebaseSetupModal();
-    state.role = role;
-    try {
-      window.recaptchaVerifier = window.recaptchaVerifier || new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
-      state.confirmationResult = await state.auth.signInWithPhoneNumber(phone, window.recaptchaVerifier);
-      otpModal(phone);
-    } catch (err) { console.error(err); toast(err.message || 'OTP failed. Check Firebase Phone Auth and authorized domain.'); }
-  }
-  async function verifyOtp() {
-    const otp = $('otpCode').value.trim(); const pin = $('pinCode').value.trim();
-    if (!/^\d{4,8}$/.test(pin)) return toast('PIN must be 4-8 digits.');
-    if (!state.confirmationResult) return toast('Send OTP first.');
-    try {
-      const res = await state.confirmationResult.confirm(otp);
-      state.user = { uid: res.user.uid, phone: res.user.phoneNumber, role: state.role, pin, loginAt: nowISO() };
-      write(LS.session, state.user); closeModal(); await syncDown(); toast('Login successful.'); render();
-    } catch (err) { toast(err.message || 'Invalid OTP.'); }
-  }
-  function logout() { localStorage.removeItem(LS.session); if (state.auth) state.auth.signOut().catch(()=>null); state.user = null; render(); }
-
-  function layout(content) {
-    return `<div class="layout safe"><header class="topbar"><button class="icon-btn" id="drawerBtn">☰</button><h2>${viewTitle()}</h2><button class="icon-btn" id="syncBtn">↻</button></header><main class="main">${content}</main>${dock()}${drawer()}</div>`;
-  }
-  function viewTitle() { return ({dashboard:"Tailor's ERP",orders:'New Order',processing:'Processing',delivery:'Delivery',staff:'Staff Ledger',analytics:'Analytics',settings:'Settings'})[state.view] || "Tailor's ERP"; }
-  function dock() { const tabs=[['dashboard','⌂','Home'],['processing','▥','Progress'],['orders','+','New'],['delivery','🚚','Delivery'],['staff','👥','Staff']]; return `<nav class="dock">${tabs.map(t=>`<button data-nav="${t[0]}" class="${state.view===t[0]?'active':''} ${t[0]==='orders'?'plus':''}"><span>${t[1]}</span><small>${t[2]}</small></button>`).join('')}</nav>`; }
-  function drawer(){ const items=[['dashboard','Home'],['orders','New Order'],['processing','Processing'],['delivery','Delivery'],['staff','Staff Ledger'],['analytics','Analytics'],['settings','Settings']]; return `<aside class="drawer ${state.drawer?'open':''}"><div class="drawer-back" data-close-drawer></div><div class="drawer-panel"><div class="brand"><div class="logo">TE</div><div><h1>${esc(state.settings.shopName)}</h1><p>${esc(state.user?.role || '')} · ${esc(state.user?.phone || '')}</p></div></div>${items.map(i=>`<button data-nav="${i[0]}" class="${state.view===i[0]?'active':''}">${i[1]}</button>`).join('')}<button id="logoutBtn" class="btn danger">Logout</button><p class="hint">Version ${VERSION}</p></div></aside>`; }
-
-  function dashboard() {
-    const active = state.orders.filter(o=>o.status !== 'Delivered');
-    const totalClothes = active.reduce((s,o)=>s + Number(o.qty||0),0);
-    const deliveredQty = state.deliveries.reduce((s,d)=>s+Number(d.qty||0),0);
-    const pending = active.reduce((s,o)=>s + remainingQty(o),0);
-    const orders = filteredOrders().slice(0,8);
-    return layout(`<div class="grid">
-      ${metric('📋', state.orders.length, 'Total Orders')}${metric('🧵', active.length, 'Active Orders')}${metric('👕', totalClothes, 'Total Clothes')}${metric('✂️', pending, 'Pending Clothes')}
-    </div><div class="search"><input id="quickSearch" value="${esc(state.search)}" placeholder="Search slip or mobile" /></div>
-    <div class="section-head"><h3>Recent Orders</h3><button class="link" data-nav="orders">New Order</button></div>
-    ${orders.length ? orders.map(orderCard).join('') : `<div class="empty">No orders yet. Tap + New to create first order.</div>`}`);
-  }
-  function metric(icon,value,label){return `<div class="metric"><i>${icon}</i><br><b>${esc(value)}</b><span>${label}</span></div>`;}
-  function filteredOrders(){ const q=state.search.trim().toLowerCase(); return [...state.orders].sort(byDateDesc).filter(o=>!q || String(o.slip).toLowerCase().includes(q) || String(o.mobile).toLowerCase().includes(q)); }
-  function orderCard(o){ const due=Number(o.total||0)-Number(o.advance||0)-Number(o.paidOnDelivery||0); return `<article class="card order-card"><div class="order-top"><div class="doc-icon">🧾</div><div><div class="order-title">#${esc(o.slip)} · ${esc(o.name)}</div><div class="small">☎ ${esc(o.mobile)} · ${remainingQty(o)}/${o.qty} remaining · Due ${money(Math.max(due,0))}</div><span class="chip ${String(o.status).toLowerCase()}">${esc(o.status||'Pending')}</span></div></div><div class="actions"><button class="icon-btn" data-call="${esc(o.mobile)}">📞</button><button class="icon-btn" data-edit="${o.id}">✎</button><button class="icon-btn" data-slip="${o.id}">PDF</button></div></article>`; }
-  function remainingQty(o){ return Math.max(0, Number(o.qty||0)-Number(o.deliveredQty||0)); }
-
-  function orderForm() {
-    const m = state.settings.measurements || [];
-    return layout(`<section class="card"><h3>Create New Order</h3><div class="form-grid two">
-      <label><span class="label">Manual Slip Number</span><input id="slip" placeholder="SLP-001" /></label>
-      <label><span class="label">Customer Name</span><input id="custName" placeholder="Customer name" /></label>
-      <label><span class="label">Mobile</span><input id="mobile" inputmode="tel" placeholder="10 digit mobile" /></label>
-      <label><span class="label">Cloth Qty</span><input id="qty" type="number" min="1" value="1" /></label>
-      <label><span class="label">Total Bill</span><input id="total" type="number" min="0" value="0" /></label>
-      <label><span class="label">Advance</span><input id="advance" type="number" min="0" value="0" /></label>
-      <label><span class="label">Design URL</span><input id="design" placeholder="Image/design link" /></label>
-      <div class="muted-box"><b>Due:</b> <span id="duePreview">₹0</span></div>
-      ${m.map(x=>`<label><span class="label">${esc(x)}</span><input data-measure="${esc(x)}" placeholder="${esc(x)}" /></label>`).join('')}
-      <label style="grid-column:1/-1"><span class="label">Notes</span><textarea id="notes" placeholder="Special instructions"></textarea></label>
-      <button class="btn gold" id="saveOrderBtn">Save Order + WhatsApp + PDF</button>
-    </div></section>`);
-  }
-  async function saveOrder() {
-    const slip=$('slip').value.trim(); const name=$('custName').value.trim(); const mobile=normalizePhone($('mobile').value);
-    const qty=Math.max(1, Number($('qty').value||1)); const total=Math.max(0, Number($('total').value||0)); const advance=Math.max(0, Number($('advance').value||0));
-    if (!slip || !name || !isValidPhone(mobile)) return toast('Slip, name and valid mobile required.');
-    if (state.orders.some(o=>String(o.slip).toLowerCase()===slip.toLowerCase())) return toast('Duplicate slip number not allowed.');
-    const measurements={}; document.querySelectorAll('[data-measure]').forEach(i=>measurements[i.dataset.measure]=i.value.trim());
-    const order={id:uid(),slip,name,mobile,qty,total,advance,design:$('design').value.trim(),notes:$('notes').value.trim(),measurements,status:'Pending',deliveredQty:0,paidOnDelivery:0,createdAt:nowISO(),updatedAt:nowISO()};
-    state.orders.unshift(order); await upsert('orders',order); openWhatsapp(mobile, `Hello ${name}, your order (Slip: ${slip}) has been placed. Total: ${total}, Advance: ${advance}, Due: ${total-advance}. Thank you!`); printSlip(order); setView('dashboard');
+        <p class="hint">First-time login uses OTP. Daily shop use opens with PIN only, not OTP.</p>
+      </div>
+    </section></main>`;
   }
 
-  function processing() { const list=filteredOrders().filter(o=>o.status!=='Delivered'); return layout(`<div class="search"><input id="quickSearch" value="${esc(state.search)}" placeholder="Search slip number" /></div>${list.length?list.map(o=>`<article class="card"><div class="section-head"><div><b>#${esc(o.slip)}</b><div class="small">${esc(o.name)} · ${remainingQty(o)} remaining</div></div><span class="chip ${String(o.status).toLowerCase()}">${esc(o.status)}</span></div><div class="split"><button class="btn secondary" data-status="${o.id}:Cutting">Cutting Complete</button><button class="btn gold" data-status="${o.id}:Ready">Ready</button></div></article>`).join(''):`<div class="empty">No active orders.</div>`}`); }
-  async function updateStatus(id,status){ const o=state.orders.find(x=>x.id===id); if(!o) return; o.status=status; o.updatedAt=nowISO(); await upsert('orders',o); if(status==='Cutting') openWhatsapp(o.mobile,`Hello ${o.name}, cutting for your order (Slip: ${o.slip}) is complete and stitching has begun.`); if(status==='Ready') openWhatsapp(o.mobile,`Good news ${o.name}! Your clothes (Slip: ${o.slip}) are ready for delivery.`); render(); }
+  function pinScreen() {
+    return `<main class="auth-page"><section class="auth-card">
+      <div class="brand"><div class="logo">TE</div><div><h1>Enter PIN</h1><p>OTP is not required for daily use.</p></div></div>
+      <div class="stack">
+        <label><span class="label">PIN</span><input id="pinLogin" type="password" inputmode="numeric" placeholder="4-8 digit PIN" /></label>
+        <button class="btn" id="unlockBtn">Unlock App</button>
+        <button class="btn secondary" id="logoutFromPinBtn">Logout / Use OTP Again</button>
+      </div>
+    </section></main>`;
+  }
 
-  function delivery(){ const list=filteredOrders().filter(o=>o.status==='Ready'||remainingQty(o)>0); return layout(`<div class="search"><input id="quickSearch" value="${esc(state.search)}" placeholder="Search slip number" /></div>${list.length?list.map(o=>`<article class="card"><b>#${esc(o.slip)} · ${esc(o.name)}</b><div class="small">Remaining: ${remainingQty(o)} · Due: ${money(Math.max(Number(o.total)-Number(o.advance)-Number(o.paidOnDelivery||0),0))}</div><div class="row"><input id="delQty-${o.id}" type="number" min="1" max="${remainingQty(o)}" value="1" /><input id="delPay-${o.id}" type="number" min="0" value="0" /></div><button class="btn gold" data-deliver="${o.id}">Confirm Delivery</button></article>`).join(''):`<div class="empty">No orders ready/active.</div>`}`); }
-  async function confirmDelivery(id){ const o=state.orders.find(x=>x.id===id); if(!o)return; const qty=Math.max(1,Math.min(remainingQty(o),Number($(`delQty-${id}`).value||1))); const paid=Math.max(0,Number($(`delPay-${id}`).value||0)); o.deliveredQty=Number(o.deliveredQty||0)+qty; o.paidOnDelivery=Number(o.paidOnDelivery||0)+paid; if(remainingQty(o)===0)o.status='Delivered'; o.updatedAt=nowISO(); const d={id:uid(),orderId:o.id,slip:o.slip,name:o.name,mobile:o.mobile,qty,paid,createdAt:nowISO()}; state.deliveries.unshift(d); await upsert('orders',o); await upsert('deliveries',d); openWhatsapp(o.mobile,`Thank you ${o.name}! Your order (Slip: ${o.slip}) has been successfully delivered.`); render(); }
+  function setupFirebaseModal() {
+    showModal(`<div class="modal-head"><h3>Firebase Setup</h3><div class="spacer"></div><button class="icon-btn light" data-close>×</button></div>
+      <div class="form-grid">
+        <div class="info">Paste only the Firebase config JSON object. Do not paste import lines.</div>
+        <textarea id="firebaseConfigText" placeholder='{"apiKey":"...","authDomain":"...","projectId":"..."}'>${esc(JSON.stringify(read(LS.firebaseConfig, {}), null, 2))}</textarea>
+        <button class="btn" id="saveFirebaseConfigBtn">Save Firebase Config</button>
+      </div>`);
+  }
 
-  function staffView(){ return layout(`<section class="card"><h3>Add Staff</h3><div class="row"><input id="staffName" placeholder="Staff name" /><input id="staffSpec" placeholder="Specialization" /></div><button class="btn" id="addStaffBtn">Add Staff</button></section><section class="card"><h3>Daily Work Entry</h3><div class="form-grid two"><select id="staffSelect"><option value="">Select staff</option>${state.staff.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select><input id="workType" placeholder="Stitch type" /><input id="rate" type="number" placeholder="Rate" /><select id="workQty">${Array.from({length:10},(_,i)=>`<option>${i+1}</option>`).join('')}</select><input id="paidToday" type="number" placeholder="Paid today" /><button class="btn gold" id="saveWorkBtn">Save Work</button></div></section><section class="card"><h3>Staff Summary</h3>${staffSummary()}</section>`); }
-  function staffSummary(){ if(!state.staff.length)return `<div class="empty">No staff added.</div>`; return `<table class="table"><thead><tr><th>Staff</th><th>Work</th><th>Paid</th><th>Balance</th></tr></thead><tbody>${state.staff.map(s=>{const rows=state.staffLedger.filter(l=>l.staffId===s.id);const work=rows.reduce((a,b)=>a+Number(b.earning||0),0);const paid=rows.reduce((a,b)=>a+Number(b.paid||0),0);return `<tr><td>${esc(s.name)}</td><td>${money(work)}</td><td>${money(paid)}</td><td>${money(work-paid)}</td></tr>`}).join('')}</tbody></table>`;}
-  async function addStaff(){ const name=$('staffName').value.trim(); if(!name)return toast('Staff name required'); const s={id:uid(),name,specialization:$('staffSpec').value.trim(),createdAt:nowISO(),updatedAt:nowISO()}; state.staff.unshift(s); await upsert('staff',s); render(); }
-  async function saveWork(){ const staffId=$('staffSelect').value; const s=state.staff.find(x=>x.id===staffId); if(!s)return toast('Select staff'); const rate=Number($('rate').value||0), qty=Number($('workQty').value||1), paid=Number($('paidToday').value||0); const row={id:uid(),staffId,staffName:s.name,type:$('workType').value.trim(),rate,qty,earning:rate*qty,paid,date:today(),createdAt:nowISO()}; state.staffLedger.unshift(row); await upsert('staffLedger',row); render(); }
+  function otpModal(phone, role) {
+    showModal(`<div class="modal-head"><h3>Verify OTP</h3><div class="spacer"></div><button class="icon-btn light" data-close>×</button></div>
+      <div class="form-grid">
+        <div class="successbox">OTP sent to ${esc(phone)}. Test number can use code 123456.</div>
+        <input id="otpCode" inputmode="numeric" placeholder="Enter OTP" />
+        <input id="pinCreate" type="password" inputmode="numeric" placeholder="Create 4-8 digit PIN" />
+        <button class="btn" id="verifyOtpBtn" data-phone="${esc(phone)}" data-role="${esc(role)}">Verify OTP & Continue</button>
+      </div>`);
+  }
 
-  function analytics(){ const revenue=state.orders.reduce((a,o)=>a+Number(o.advance||0)+Number(o.paidOnDelivery||0),0); const due=state.orders.reduce((a,o)=>a+Math.max(Number(o.total||0)-Number(o.advance||0)-Number(o.paidOnDelivery||0),0),0); const stitched=state.orders.filter(o=>['Ready','Delivered'].includes(o.status)).reduce((a,o)=>a+Number(o.qty||0),0); return layout(`<div class="grid">${metric('💰',money(revenue),'Revenue')}${metric('📌',money(due),'Total Due')}${metric('✅',stitched,'Stitched')}${metric('🚚',state.deliveries.reduce((a,d)=>a+Number(d.qty||0),0),'Delivered')}</div>`); }
-  function settings(){ return layout(`<section class="card"><h3>Shop Info</h3><div class="form-grid"><input id="shopName" value="${esc(state.settings.shopName)}" placeholder="Shop name" /><input id="shopPhone" value="${esc(state.settings.phone)}" placeholder="Shop phone" /><textarea id="shopAddress" placeholder="Address">${esc(state.settings.address)}</textarea><button class="btn" id="saveSettingsBtn">Save Settings</button></div></section><section class="card"><h3>Measurements</h3><textarea id="measurementsText">${esc((state.settings.measurements||[]).join('\n'))}</textarea><p class="hint">One measurement label per line.</p></section><section class="card"><h3>Backup</h3><button class="btn secondary" id="exportBtn">Export JSON</button><textarea id="importJson" placeholder="Paste backup JSON to import"></textarea><button class="btn secondary" id="importBtn">Import JSON</button></section><section class="card danger-zone"><h3>Data Reset</h3><input id="confirmReset" placeholder="Type CONFIRM" /><button class="btn danger" id="resetBtn">Clear All Local Data</button></section>`); }
-  async function saveSettingsFromForm(){ state.settings.shopName=$('shopName').value.trim()||"Tailor's ERP"; state.settings.phone=$('shopPhone').value.trim(); state.settings.address=$('shopAddress').value.trim(); state.settings.measurements=$('measurementsText').value.split('\n').map(x=>x.trim()).filter(Boolean); await saveSettings(); toast('Settings saved'); render(); }
-  function exportData(){ const data={orders:state.orders,staff:state.staff,staffLedger:state.staffLedger,deliveries:state.deliveries,settings:state.settings,exportedAt:nowISO()}; navigator.clipboard?.writeText(JSON.stringify(data,null,2)); showModal(`<div class="modal-head"><h3>Backup JSON</h3><button class="icon-btn" data-close>×</button></div><textarea style="min-height:320px">${esc(JSON.stringify(data,null,2))}</textarea>`); }
-  function importData(){ try{const data=JSON.parse($('importJson').value); state.orders=data.orders||[]; state.staff=data.staff||[]; state.staffLedger=data.staffLedger||[]; state.deliveries=data.deliveries||[]; state.settings={...DEFAULT_SETTINGS,...(data.settings||{})}; persistAll(); toast('Imported'); render();}catch{toast('Invalid backup JSON');} }
-  function resetData(){ if($('confirmReset').value!=='CONFIRM')return toast('Type CONFIRM'); [LS.orders,LS.staff,LS.staffLedger,LS.deliveries].forEach(k=>localStorage.removeItem(k)); loadLocal(); toast('Local data cleared'); render(); }
+  function metrics() {
+    const active = state.orders.filter((o) => o.status !== 'delivered');
+    const totalClothes = active.reduce((sum, o) => sum + o.clothQty - o.deliveredQty, 0);
+    const pendingClothes = active.reduce((sum, o) => sum + o.pendingQty + o.processingQty, 0);
+    const due = state.orders.reduce((sum, o) => sum + num(o.due), 0);
+    return [
+      ['Total Orders', state.orders.length], ['Active Orders', active.length], ['Active Clothes', totalClothes], ['Pending Cloth', pendingClothes], ['Ready Cloth', active.reduce((s, o) => s + o.readyQty, 0)], ['Total Due', money(due)]
+    ];
+  }
 
-  function showModal(html){ $('modal-root').innerHTML=`<div class="modal-wrap"><div class="modal">${html}</div></div>`; document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal); }
-  function closeModal(){ $('modal-root').innerHTML=''; }
-  function openWhatsapp(phone,text){ const url=`https://api.whatsapp.com/send?phone=${normalizePhone(phone).replace('+','')}&text=${encodeURIComponent(text)}`; window.open(url,'_blank','noopener'); }
-  function printSlip(order){ const w=window.open('','_blank'); if(!w)return; const due=Number(order.total)-Number(order.advance); w.document.write(`<html><head><title>Slip ${esc(order.slip)}</title><style>body{font-family:Arial;padding:24px}h1{margin:0}.box{border:1px solid #ddd;padding:16px;border-radius:12px}table{width:100%;border-collapse:collapse}td{padding:8px;border-bottom:1px solid #eee}</style></head><body><div class="box"><h1>${esc(state.settings.shopName)}</h1><p>${esc(state.settings.address)}</p><h2>Slip #${esc(order.slip)}</h2><table><tr><td>Name</td><td>${esc(order.name)}</td></tr><tr><td>Mobile</td><td>${esc(order.mobile)}</td></tr><tr><td>Qty</td><td>${order.qty}</td></tr><tr><td>Total</td><td>${money(order.total)}</td></tr><tr><td>Advance</td><td>${money(order.advance)}</td></tr><tr><td>Due</td><td>${money(due)}</td></tr></table><h3>Measurements</h3><pre>${esc(JSON.stringify(order.measurements,null,2))}</pre><p>${esc(state.settings.slipText)}</p></div><script>window.print()</script></body></html>`); w.document.close(); }
-  function callPhone(phone){ if(confirm(`Call customer ${phone}?`)) location.href=`tel:${normalizePhone(phone)}`; }
-  function editOrder(id){ const o=state.orders.find(x=>x.id===id); if(!o)return; showModal(`<div class="modal-head"><h3>Edit Order #${esc(o.slip)}</h3><button class="icon-btn" data-close>×</button></div><div class="form-grid"><input id="editName" value="${esc(o.name)}" /><input id="editTotal" type="number" value="${o.total}" /><input id="editAdvance" type="number" value="${o.advance}" /><select id="editStatus"><option>Pending</option><option>Cutting</option><option>Ready</option><option>Delivered</option></select><button class="btn" id="saveEditBtn">Save Edit</button></div>`); $('editStatus').value=o.status; $('saveEditBtn').onclick=async()=>{o.name=$('editName').value.trim();o.total=Number($('editTotal').value||0);o.advance=Number($('editAdvance').value||0);o.status=$('editStatus').value;o.updatedAt=nowISO();await upsert('orders',o);closeModal();render();}; }
+  function homeView() {
+    const q = state.search.home.toLowerCase();
+    const filtered = state.orders.filter((o) => !q || o.slip.toLowerCase().includes(q) || o.mobile.includes(q) || o.customerName.toLowerCase().includes(q)).slice(0, 10);
+    return shell(`<section class="metric-grid">${metrics().slice(0, 4).map(([label, value]) => `<div class="metric"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join('')}</section>
+      <section class="section">
+        <div class="section-head"><h2>Recent Orders</h2><div class="spacer"></div><span class="pill">${state.orders.length}</span></div>
+        ${searchBox('home', 'Search slip / mobile / name')}
+        <div class="order-list">${filtered.length ? filtered.map(orderCard).join('') : '<div class="empty">No orders found. Tap + to create a new order.</div>'}</div>
+      </section>`);
+  }
 
-  function bind() {
-    document.body.onclick = async (e) => {
-      const nav=e.target.closest('[data-nav]'); if(nav) return setView(nav.dataset.nav);
-      if(e.target.closest('#drawerBtn')) { state.drawer=true; return render(); }
-      if(e.target.matches('[data-close-drawer]')) { state.drawer=false; return render(); }
-      if(e.target.closest('#logoutBtn')) return logout();
-      if(e.target.closest('#syncBtn')) { await syncDown(); toast('Synced'); return render(); }
-      if(e.target.closest('#sendOtpBtn')) return sendOtp();
-      if(e.target.closest('#setupFirebaseBtn')) return firebaseSetupModal();
-      if(e.target.closest('#saveOrderBtn')) return saveOrder();
-      if(e.target.closest('#addStaffBtn')) return addStaff();
-      if(e.target.closest('#saveWorkBtn')) return saveWork();
-      if(e.target.closest('#saveSettingsBtn')) return saveSettingsFromForm();
-      if(e.target.closest('#exportBtn')) return exportData();
-      if(e.target.closest('#importBtn')) return importData();
-      if(e.target.closest('#resetBtn')) return resetData();
-      const call=e.target.closest('[data-call]'); if(call) return callPhone(call.dataset.call);
-      const edit=e.target.closest('[data-edit]'); if(edit) return editOrder(edit.dataset.edit);
-      const slip=e.target.closest('[data-slip]'); if(slip){const o=state.orders.find(x=>x.id===slip.dataset.slip); if(o) return printSlip(o);}
-      const st=e.target.closest('[data-status]'); if(st){const [id,status]=st.dataset.status.split(':'); return updateStatus(id,status);}
-      const del=e.target.closest('[data-deliver]'); if(del)return confirmDelivery(del.dataset.deliver);
-    };
-    document.body.oninput = (e) => {
-      if(e.target.id==='quickSearch'){state.search=e.target.value; render();}
-      if(['total','advance'].includes(e.target.id)){ const total=Number($('total')?.value||0); const adv=Number($('advance')?.value||0); const d=$('duePreview'); if(d)d.textContent=money(Math.max(total-adv,0)); }
-    };
+  function searchBox(scope, placeholder) {
+    const value = state.search[scope] || '';
+    return `<div class="search-wrap" style="margin-bottom:12px"><input data-search="${scope}" value="${esc(value)}" placeholder="${esc(placeholder)}" />${value ? `<button class="clear-btn" data-clear-search="${scope}">×</button>` : ''}</div>`;
+  }
+
+  function orderCard(order) {
+    const o = normalizeOrder(order);
+    return `<article class="order-card compact">
+      <div class="order-top"><div class="grow"><div class="order-title">Slip: ${esc(o.slip)} — ${esc(o.customerName)}</div><div class="tiny">${fmtDate(o.createdAt)} • ${esc(o.mobile)}</div></div><span class="badge ${o.status}">${statusText(o.status)}</span></div>
+      <div class="card-meta"><span>Clothes: ${o.clothQty}</span><span>Ready: ${o.readyQty}</span><span>Delivered: ${o.deliveredQty}</span><span>Due: ${money(o.due)}</span></div>
+      <div class="card-actions">
+        <button class="mini-btn" data-call="${esc(o.mobile)}">Call</button>
+        <button class="mini-btn" data-edit-order="${esc(o.id)}">Edit</button>
+        <button class="mini-btn" data-slip="${esc(o.id)}">PDF</button>
+        <button class="mini-btn primary" data-open-order="${esc(o.id)}">View</button>
+      </div>
+    </article>`;
+  }
+
+  function statusText(status) {
+    return ({ pending: 'Pending', processing: 'Processing', ready: 'Ready', partial_delivered: 'Partial', delivered: 'Delivered' })[status] || status;
+  }
+
+  function newOrderView() {
+    const measurementFields = state.settings.measurements || [];
+    return shell(`<section class="section"><div class="section-head"><h2>New Order</h2><div class="spacer"></div><button class="btn secondary small" id="openSettingsFromOrder">Measurement Settings</button></div>
+      <form id="orderForm" class="form-grid">
+        <div class="two"><label><span class="label">Slip Number</span><input name="slip" required placeholder="Manual slip no" /></label><label><span class="label">Mobile Number</span><input name="mobile" inputmode="tel" required placeholder="10 digit mobile" /></label></div>
+        <label><span class="label">Customer Name</span><input name="customerName" required placeholder="Customer name" /></label>
+        <label><span class="label">Cloth Quantity</span><select name="clothQty" required><option value="">Select quantity</option>${Array.from({ length: 30 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select></label>
+        <div class="two"><label><span class="label">Total Bill</span><input name="bill" inputmode="decimal" placeholder="Enter bill amount" /></label><label><span class="label">Advance Paid</span><input name="advance" inputmode="decimal" placeholder="Enter advance" /></label></div>
+        <div class="total-panel"><span>Due Amount</span><br><b id="duePreview">₹0</b></div>
+        <label><span class="label">Design URL / Reference</span><input name="designUrl" placeholder="Paste design link if any" /></label>
+        <div class="section" style="box-shadow:none;margin:0;background:#fff">
+          <div class="section-head"><h2>Measurements</h2></div>
+          ${measurementFields.length ? `<div class="form-grid">${measurementFields.map((m) => `<label><span class="label">${esc(m)}</span><input name="measure_${esc(m)}" placeholder="Enter ${esc(m)}" /></label>`).join('')}</div>` : '<div class="warning">No measurement fields configured. Add fields in Settings first.</div>'}
+        </div>
+        <button class="btn" type="submit">Save Order & Share PDF Slip</button>
+      </form>
+    </section>`);
+  }
+
+  function processView() {
+    const q = state.search.process.toLowerCase();
+    const orders = state.orders.filter((o) => o.status !== 'delivered' && (!q || o.slip.toLowerCase().includes(q) || o.mobile.includes(q) || o.customerName.toLowerCase().includes(q)));
+    const selected = state.orders.find((o) => o.id === state.selected.processOrderId) || orders[0];
+    if (selected && !state.selected.processOrderId) state.selected.processOrderId = selected.id;
+    return shell(`<section class="section"><div class="section-head"><h2>Processing</h2></div>
+      ${searchBox('process', 'Search slip / mobile / name')}
+      <label><span class="label">Select Order</span><select id="processOrderSelect"><option value="">Select order</option>${orders.map((o) => `<option value="${esc(o.id)}" ${selected?.id === o.id ? 'selected' : ''}>Slip ${esc(o.slip)} — ${esc(o.customerName)} (${statusText(o.status)})</option>`).join('')}</select></label>
+      ${selected ? processingPanel(normalizeOrder(selected)) : '<div class="empty">No active order found.</div>'}
+    </section>`);
+  }
+
+  function processingPanel(order) {
+    return `<div class="section" style="box-shadow:none;background:#fff;margin-top:12px">
+      <div class="section-head"><h2>Slip ${esc(order.slip)}</h2><div class="spacer"></div><span class="badge ${order.status}">${statusText(order.status)}</span></div>
+      <div class="card-meta"><span>Customer: ${esc(order.customerName)}</span><span>Mobile: ${esc(order.mobile)}</span><span>Total: ${order.clothQty}</span><span>Ready: ${order.readyQty}</span></div>
+      <div class="divider"></div>
+      <div class="form-grid">
+        ${order.items.map((item) => `<div class="row nowrap"><span class="pill">Cloth ${item.no}</span><span class="grow badge ${item.status === 'delivered' ? 'delivered' : item.status === 'ready' ? 'ready' : item.status === 'processing' ? 'processing' : 'pending'}">${statusText(item.status)}</span>${item.status !== 'delivered' ? `<button class="mini-btn" data-mark-processing="${order.id}:${item.no}">Processing</button><button class="mini-btn green" data-mark-ready="${order.id}:${item.no}">Ready</button>` : ''}</div>`).join('')}
+      </div>
+      <div class="card-actions"><button class="btn small" data-slip="${order.id}">Share PDF Slip</button><button class="btn secondary small" data-whatsapp-ready="${order.id}">WhatsApp Status</button></div>
+    </div>`;
+  }
+
+  function deliveryView() {
+    const q = state.search.delivery.toLowerCase();
+    const orders = state.orders.filter((o) => o.status !== 'delivered' && (!q || o.slip.toLowerCase().includes(q) || o.mobile.includes(q) || o.customerName.toLowerCase().includes(q)));
+    const selected = state.orders.find((o) => o.id === state.selected.deliveryOrderId) || orders[0];
+    if (selected && !state.selected.deliveryOrderId) state.selected.deliveryOrderId = selected.id;
+    return shell(`<section class="section"><div class="section-head"><h2>Delivery</h2></div>
+      ${searchBox('delivery', 'Search slip / mobile / name')}
+      <label><span class="label">Select Order</span><select id="deliveryOrderSelect"><option value="">Select order</option>${orders.map((o) => `<option value="${esc(o.id)}" ${selected?.id === o.id ? 'selected' : ''}>Slip ${esc(o.slip)} — Ready ${o.readyQty}/${o.clothQty}</option>`).join('')}</select></label>
+      ${selected ? deliveryPanel(normalizeOrder(selected)) : '<div class="empty">No active order found.</div>'}
+    </section>`);
+  }
+
+  function deliveryPanel(order) {
+    if (order.readyQty <= 0) {
+      return `<div class="section" style="box-shadow:none;background:#fff;margin-top:12px">
+        <h2>Slip ${esc(order.slip)}</h2>
+        <div class="warning">This order is not processed yet. Complete processing before delivery.</div>
+        <div class="card-meta"><span>Status: ${statusText(order.status)}</span><span>Pending: ${order.pendingQty}</span><span>Processing: ${order.processingQty}</span><span>Ready: ${order.readyQty}</span></div>
+      </div>`;
+    }
+    return `<div class="section" style="box-shadow:none;background:#fff;margin-top:12px">
+      <div class="section-head"><h2>Slip ${esc(order.slip)}</h2><div class="spacer"></div><span class="badge ready">Ready ${order.readyQty}</span></div>
+      <div class="card-meta"><span>Customer: ${esc(order.customerName)}</span><span>Bill: ${money(order.bill)}</span><span>Advance: ${money(order.advance)}</span><span>Due: ${money(order.due)}</span></div>
+      <form id="deliveryForm" class="form-grid" data-order-id="${esc(order.id)}" style="margin-top:12px">
+        <label><span class="label">Clothes to Deliver</span><select name="deliverQty">${Array.from({ length: order.readyQty }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}</select></label>
+        <label><span class="label">Payment Received Today</span><input name="paid" inputmode="decimal" placeholder="Enter received amount" /></label>
+        <button class="btn green" type="submit">Confirm Delivery</button>
+      </form>
+    </div>`;
+  }
+
+  function staffView() {
+    const selectedStaff = state.staff.find((s) => s.id === state.selected.staffId) || state.staff[0];
+    if (selectedStaff && !state.selected.staffId) state.selected.staffId = selectedStaff.id;
+    return shell(`<section class="section"><div class="section-head"><h2>Staff Ledger</h2><div class="spacer"></div><button class="btn secondary small" id="staffSettingsShortcut">Rate Settings</button></div>
+      <form id="addStaffForm" class="row nowrap"><input name="name" placeholder="Staff name" /><button class="btn gold small" type="submit">Add</button></form>
+      <div class="divider"></div>
+      <label><span class="label">Select Staff</span><select id="staffSelect"><option value="">Select staff</option>${state.staff.map((s) => `<option value="${esc(s.id)}" ${selectedStaff?.id === s.id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></label>
+      ${selectedStaff ? staffWorkPanel(selectedStaff) : '<div class="empty">Add staff first.</div>'}
+    </section>`);
+  }
+
+  function staffWorkPanel(staff) {
+    const workTypes = state.settings.workTypes || [];
+    const ledger = state.staffLedger.filter((x) => x.staffId === staff.id).sort(byDateDesc);
+    const totalWork = ledger.reduce((s, x) => s + num(x.total), 0);
+    const totalPaid = ledger.reduce((s, x) => s + num(x.paid), 0);
+    return `<div style="margin-top:12px">
+      ${workTypes.length ? `<form id="staffWorkForm" data-staff-id="${esc(staff.id)}" class="form-grid">
+        <div class="info">Select quantity for each cloth type. Total auto-calculates.</div>
+        <div>${workTypes.map((wt) => `<div class="work-row"><div><b>${esc(wt.type)}</b><div class="tiny">Rate ${money(wt.rate)}</div></div><select data-work-qty="${esc(wt.id)}">${Array.from({ length: 11 }, (_, i) => `<option value="${i}">${i === 0 ? 'Qty' : i}</option>`).join('')}</select><div class="tiny" id="workLine_${esc(wt.id)}">₹0</div></div>`).join('')}</div>
+        <div class="total-panel"><span>Total Work Payment</span><br><b id="staffTotalPreview">₹0</b></div>
+        <label><span class="label">Paid Today</span><input name="paid" inputmode="decimal" placeholder="Enter paid amount" /></label>
+        <button class="btn" type="submit">Save Work</button>
+      </form>` : '<div class="warning">No cloth type/rate configured. Add cloth type and price in Settings first.</div>'}
+      <div class="section" style="box-shadow:none;background:#fff;margin-top:12px">
+        <div class="section-head"><h2>Summary</h2></div>
+        <div class="metric-grid"><div class="metric"><b>${ledger.length}</b><span>Work Days</span></div><div class="metric"><b>${money(totalWork)}</b><span>Total Work</span></div><div class="metric"><b>${money(totalPaid)}</b><span>Total Paid</span></div><div class="metric"><b>${money(totalWork - totalPaid)}</b><span>Balance</span></div></div>
+        ${ledger.length ? `<table class="table"><thead><tr><th>Date</th><th>Work</th><th>Total</th><th>Paid</th></tr></thead><tbody>${ledger.slice(0, 20).map((x) => `<tr><td>${esc(x.date)}</td><td>${esc(x.summary)}</td><td>${money(x.total)}</td><td>${money(x.paid)}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No ledger yet.</div>'}
+      </div>
+    </div>`;
+  }
+
+  function settingsView() {
+    return shell(`<section class="section"><div class="section-head"><h2>Settings</h2></div>
+      <form id="settingsForm" class="form-grid">
+        <label><span class="label">Shop Name</span><input name="shopName" value="${esc(state.settings.shopName)}" /></label>
+        <label><span class="label">Address</span><input name="address" value="${esc(state.settings.address)}" /></label>
+        <label><span class="label">Phone</span><input name="phone" value="${esc(state.settings.phone)}" /></label>
+        <label><span class="label">Slip Footer Text</span><input name="slipText" value="${esc(state.settings.slipText)}" /></label>
+        <button class="btn" type="submit">Save Shop Info</button>
+      </form>
+    </section>
+    <section class="section"><div class="section-head"><h2>Measurement Setup</h2></div>
+      <form id="measurementForm" class="row nowrap"><input name="label" placeholder="Example: Length, Chest, Waist" /><button class="btn gold small" type="submit">Add</button></form>
+      <div class="row" style="margin-top:12px">${state.settings.measurements.length ? state.settings.measurements.map((m) => `<span class="pill">${esc(m)} <button class="mini-btn red" data-remove-measure="${esc(m)}">×</button></span>`).join('') : '<div class="empty">No measurement fields. New Order will show empty measurement setup.</div>'}</div>
+    </section>
+    <section class="section"><div class="section-head"><h2>Staff Cloth Type & Price</h2></div>
+      <form id="workTypeForm" class="three"><input name="type" placeholder="Cloth type" /><input name="rate" inputmode="decimal" placeholder="Rate" /><button class="btn gold" type="submit">Save</button></form>
+      <div style="margin-top:12px">${state.settings.workTypes.length ? state.settings.workTypes.map((wt) => `<div class="work-row"><div><b>${esc(wt.type)}</b></div><div>${money(wt.rate)}</div><button class="mini-btn red" data-remove-worktype="${esc(wt.id)}">Remove</button></div>`).join('') : '<div class="empty">No cloth type/rate saved.</div>'}</div>
+    </section>
+    <section class="section"><div class="section-head"><h2>Backup & Reset</h2></div>
+      <div class="row"><button class="btn secondary" id="exportBackupBtn">Export JSON</button><button class="btn secondary" id="importBackupBtn">Import JSON</button><button class="btn red" id="resetDataBtn">Reset Data</button></div>
+    </section>`);
+  }
+
+  function analyticsView() {
+    const totalReceived = state.orders.reduce((s, o) => s + o.clothQty, 0);
+    const totalReady = state.orders.reduce((s, o) => s + o.readyQty + o.deliveredQty, 0);
+    const totalDelivered = state.orders.reduce((s, o) => s + o.deliveredQty, 0);
+    const revenue = state.orders.reduce((s, o) => s + num(o.advance) + num(o.deliveryPaidTotal), 0);
+    const due = state.orders.reduce((s, o) => s + num(o.due), 0);
+    return shell(`<section class="section"><div class="section-head"><h2>Analytics</h2></div>
+      <div class="metric-grid">${[
+        ['Clothes Received', totalReceived], ['Ready/Stitched', totalReady], ['Delivered', totalDelivered], ['Revenue', money(revenue)], ['Due', money(due)], ['Active Orders', state.orders.filter((o) => o.status !== 'delivered').length]
+      ].map(([l, v]) => `<div class="metric"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>
+    </section>`);
   }
 
   function render() {
+    if (!app()) return;
+    if (!state.ready) {
+      app().innerHTML = '<main class="auth-page"><section class="auth-card"><div class="brand"><div class="logo">TE</div><div><h1>Loading</h1><p>Preparing Tailor ERP...</p></div></div></section></main>';
+      return;
+    }
+    if (!state.firebaseUser) {
+      app().innerHTML = authScreen();
+      bindBaseEvents();
+      return;
+    }
+    if (!state.profile || !state.profile.pinHash || !state.unlocked) {
+      app().innerHTML = pinScreen();
+      bindBaseEvents();
+      return;
+    }
+    const viewMap = { home: homeView, new: newOrderView, process: processView, delivery: deliveryView, staff: staffView, settings: settingsView, analytics: analyticsView };
+    app().innerHTML = (viewMap[state.view] || homeView)();
+    bindBaseEvents();
+    bindViewEvents();
+  }
+
+  function bindBaseEvents() {
+    document.querySelectorAll('[data-nav]').forEach((btn) => btn.addEventListener('click', () => setView(btn.dataset.nav)));
+    $('drawerBtn')?.addEventListener('click', () => { state.drawer = true; render(); });
+    $('drawerBackdrop')?.addEventListener('click', () => { state.drawer = false; render(); });
+    $('syncBtn')?.addEventListener('click', async () => { await syncDown(); toast('Synced'); render(); });
+    $('setupFirebaseBtn')?.addEventListener('click', setupFirebaseModal);
+    $('saveFirebaseConfigBtn')?.addEventListener('click', saveFirebaseConfigFromModal);
+    $('sendOtpBtn')?.addEventListener('click', sendOtp);
+    $('verifyOtpBtn')?.addEventListener('click', verifyOtp);
+    $('unlockBtn')?.addEventListener('click', unlockWithPin);
+    $('logoutFromPinBtn')?.addEventListener('click', logout);
+    $('lockBtn')?.addEventListener('click', lockOnly);
+    $('logoutBtn')?.addEventListener('click', logout);
+    document.querySelectorAll('[data-close]').forEach((btn) => btn.addEventListener('click', closeModal));
+    document.querySelectorAll('[data-search]').forEach((input) => input.addEventListener('input', () => { state.search[input.dataset.search] = input.value; render(); }));
+    document.querySelectorAll('[data-clear-search]').forEach((btn) => btn.addEventListener('click', () => { state.search[btn.dataset.clearSearch] = ''; render(); }));
+    document.querySelectorAll('[data-call]').forEach((btn) => btn.addEventListener('click', () => callCustomer(btn.dataset.call)));
+    document.querySelectorAll('[data-slip]').forEach((btn) => btn.addEventListener('click', () => shareSlipById(btn.dataset.slip)));
+    document.querySelectorAll('[data-open-order]').forEach((btn) => btn.addEventListener('click', () => viewOrder(btn.dataset.openOrder)));
+    document.querySelectorAll('[data-edit-order]').forEach((btn) => btn.addEventListener('click', () => editOrderModal(btn.dataset.editOrder)));
+  }
+
+  function bindViewEvents() {
+    $('orderForm')?.addEventListener('submit', saveOrder);
+    $('orderForm')?.addEventListener('input', updateDuePreview);
+    $('openSettingsFromOrder')?.addEventListener('click', () => setView('settings'));
+    $('processOrderSelect')?.addEventListener('change', (e) => { state.selected.processOrderId = e.target.value; render(); });
+    document.querySelectorAll('[data-mark-processing]').forEach((btn) => btn.addEventListener('click', () => updateItemStatus(btn.dataset.markProcessing, 'processing')));
+    document.querySelectorAll('[data-mark-ready]').forEach((btn) => btn.addEventListener('click', () => updateItemStatus(btn.dataset.markReady, 'ready')));
+    document.querySelectorAll('[data-whatsapp-ready]').forEach((btn) => btn.addEventListener('click', () => sendStatusWhatsApp(btn.dataset.whatsappReady)));
+    $('deliveryOrderSelect')?.addEventListener('change', (e) => { state.selected.deliveryOrderId = e.target.value; render(); });
+    $('deliveryForm')?.addEventListener('submit', confirmDelivery);
+    $('addStaffForm')?.addEventListener('submit', addStaff);
+    $('staffSelect')?.addEventListener('change', (e) => { state.selected.staffId = e.target.value; render(); });
+    $('staffSettingsShortcut')?.addEventListener('click', () => setView('settings'));
+    $('staffWorkForm')?.addEventListener('change', updateStaffTotal);
+    $('staffWorkForm')?.addEventListener('submit', saveStaffWork);
+    $('settingsForm')?.addEventListener('submit', saveShopInfo);
+    $('measurementForm')?.addEventListener('submit', addMeasurement);
+    $('workTypeForm')?.addEventListener('submit', addWorkType);
+    document.querySelectorAll('[data-remove-measure]').forEach((btn) => btn.addEventListener('click', () => removeMeasurement(btn.dataset.removeMeasure)));
+    document.querySelectorAll('[data-remove-worktype]').forEach((btn) => btn.addEventListener('click', () => removeWorkType(btn.dataset.removeWorktype)));
+    $('exportBackupBtn')?.addEventListener('click', exportBackup);
+    $('importBackupBtn')?.addEventListener('click', importBackup);
+    $('resetDataBtn')?.addEventListener('click', resetData);
+  }
+
+  async function saveFirebaseConfigFromModal() {
     try {
-      if (!state.user) { app().innerHTML = authScreen(); return; }
-      const map={dashboard,orders:orderForm,processing,delivery,staff:staffView,analytics,settings};
-      app().innerHTML = (map[state.view] || dashboard)();
-    } catch (err) {
-      console.error(err); app().innerHTML = `<main class="auth-page"><section class="auth-card"><h1>Startup Protected</h1><div class="error">${esc(err.message||err)}</div><button class="btn" onclick="location.reload()">Reload</button></section></main>`;
+      const raw = $('firebaseConfigText').value.trim();
+      const cfg = JSON.parse(raw);
+      if (!cfg.apiKey || !cfg.authDomain || !cfg.projectId || !cfg.appId) throw new Error('Missing required Firebase fields.');
+      write(LS.firebaseConfig, cfg);
+      closeModal();
+      toast('Firebase config saved. Reloading...');
+      setTimeout(() => location.reload(), 650);
+    } catch (error) {
+      toast(`Invalid Firebase config: ${error.message}`);
     }
   }
-  async function init() {
-    bind(); loadLocal(); render(); await initFirebase();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>null);
-    setInterval(()=>{ if(state.user && ['Owner','Manager'].includes(state.user.role)){ const login = new Date(state.user.loginAt).getTime(); if(Date.now()-login>20*60*1000){ toast('Session expired'); logout(); } } }, 30000);
+
+  async function sendOtp() {
+    const phoneRaw = clean($('loginPhone').value);
+    const role = clean($('loginRole').value);
+    const phone = normalizePhone(phoneRaw);
+    if (!role) return toast('Please select a role.');
+    if (!isValidIndianPhone(phone)) return toast('Enter a valid Indian 10 digit mobile number.');
+    if (!state.firebaseReady || !state.auth) return toast('Firebase setup is missing. Save Firebase Web config first.');
+    try {
+      if (state.processingNotifyTarget) state.processingNotifyTarget.clear?.();
+      const verifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+      state.processingNotifyTarget = verifier;
+      state.confirmationResult = await state.auth.signInWithPhoneNumber(phone, verifier);
+      otpModal(phone, role);
+    } catch (error) {
+      const msg = firebaseFriendlyError(error);
+      toast(`Firebase: ${msg}`);
+    }
   }
+
+  async function verifyOtp() {
+    const code = clean($('otpCode').value);
+    const pin = clean($('pinCreate').value);
+    const role = clean($('verifyOtpBtn').dataset.role);
+    if (!/^\d{4,8}$/.test(pin)) return toast('PIN must be 4 to 8 digits.');
+    if (!state.confirmationResult) return toast('OTP session missing. Send OTP again.');
+    try {
+      const result = await state.confirmationResult.confirm(code);
+      const user = result.user;
+      const pinHash = await sha256(`${user.uid}:${pin}`);
+      state.profile = { uid: user.uid, phone: user.phoneNumber, role, pinHash, createdAt: nowISO(), updatedAt: nowISO() };
+      write(LS.profile, state.profile);
+      unlockProfile();
+      closeModal();
+      await syncDown();
+      render();
+    } catch (error) {
+      toast(`OTP failed: ${firebaseFriendlyError(error)}`);
+    }
+  }
+
+  async function unlockWithPin() {
+    const pin = clean($('pinLogin').value);
+    if (!state.profile || !state.firebaseUser) return toast('Profile missing. Login with OTP once.');
+    const hash = await sha256(`${state.profile.uid}:${pin}`);
+    if (hash !== state.profile.pinHash) return toast('Wrong PIN.');
+    unlockProfile();
+    render();
+  }
+
+  function unlockProfile() {
+    const validUntil = Date.now() + unlockMs(state.profile.role);
+    write(LS.unlock, { uid: state.profile.uid, validUntil });
+    state.unlocked = true;
+  }
+
+  function lockOnly() {
+    remove(LS.unlock);
+    state.unlocked = false;
+    state.drawer = false;
+    render();
+  }
+
+  async function logout() {
+    if (!confirm('Logout will require OTP again. Continue?')) return;
+    remove(LS.profile);
+    remove(LS.unlock);
+    state.profile = null;
+    state.unlocked = false;
+    if (state.auth) await state.auth.signOut();
+    render();
+  }
+
+  function firebaseFriendlyError(error) {
+    const code = error?.code || '';
+    if (code.includes('too-many-requests')) return 'Too many OTP requests. Wait, or use Firebase test phone number.';
+    if (code.includes('operation-not-allowed')) return 'Phone Auth or SMS region is not enabled.';
+    if (code.includes('invalid-phone-number')) return 'Invalid phone number.';
+    if (code.includes('invalid-verification-code')) return 'Invalid OTP code.';
+    return error?.message || String(error);
+  }
+
+  function updateDuePreview() {
+    const form = $('orderForm');
+    if (!form) return;
+    const bill = num(form.bill.value);
+    const advance = num(form.advance.value);
+    $('duePreview').textContent = money(Math.max(0, bill - advance));
+  }
+
+  async function saveOrder(event) {
+    event.preventDefault();
+    const form = event.target;
+    const slip = clean(form.slip.value);
+    const mobile = normalizePhone(form.mobile.value);
+    const customerName = clean(form.customerName.value);
+    const clothQty = num(form.clothQty.value);
+    const bill = num(form.bill.value);
+    const advance = num(form.advance.value);
+    if (!slip || !customerName || !clothQty) return toast('Slip, customer name and quantity are required.');
+    if (!isValidIndianPhone(mobile)) return toast('Enter a valid Indian mobile number.');
+    if (bill <= 0) return toast('Total bill must be entered.');
+    if (advance < 0 || advance > bill) return toast('Advance must be between 0 and total bill.');
+    if (state.orders.some((o) => o.slip.toLowerCase() === slip.toLowerCase())) return toast('Duplicate slip number is not allowed.');
+    const measurements = {};
+    for (const label of state.settings.measurements) {
+      measurements[label] = clean(form[`measure_${label}`]?.value || '');
+    }
+    const order = normalizeOrder({
+      id: uid(), slip, mobile, customerName, clothQty, bill, advance, due: bill - advance,
+      deliveryPaidTotal: 0,
+      designUrl: clean(form.designUrl.value), measurements,
+      items: Array.from({ length: clothQty }, (_, i) => ({ no: i + 1, status: 'pending' })),
+      timeline: [{ at: nowISO(), action: 'Order created' }],
+      createdAt: nowISO(), updatedAt: nowISO(), createdBy: state.profile?.phone || ''
+    });
+    state.orders.unshift(order);
+    await pushDoc('orders', order);
+    toast('Order saved. Creating PDF slip...');
+    await shareSlip(order);
+    await openWhatsApp(order.mobile, `Hello ${order.customerName}, your order (Slip: ${order.slip}) has been placed. Total: ${money(order.bill)}, Advance: ${money(order.advance)}, Due: ${money(order.due)}. Thank you!`);
+    state.view = 'home';
+    render();
+  }
+
+  async function updateItemStatus(token, status) {
+    const [orderId, noText] = token.split(':');
+    const no = Number(noText);
+    const idx = state.orders.findIndex((o) => o.id === orderId);
+    if (idx < 0) return;
+    const order = normalizeOrder(state.orders[idx]);
+    const item = order.items.find((x) => x.no === no);
+    if (!item || item.status === 'delivered') return toast('Delivered item cannot be changed.');
+    item.status = status;
+    order.timeline = [...(order.timeline || []), { at: nowISO(), action: `Cloth ${no} marked ${status}` }];
+    order.updatedAt = nowISO();
+    const updated = normalizeOrder(order);
+    state.orders[idx] = updated;
+    await pushDoc('orders', updated);
+    const allInProcessing = updated.items.every((x) => x.status === 'processing' || x.status === 'ready' || x.status === 'delivered');
+    const allReady = updated.items.every((x) => x.status === 'ready' || x.status === 'delivered');
+    if (allInProcessing && !updated.notifiedProcessing) {
+      updated.notifiedProcessing = true;
+      await pushDoc('orders', updated);
+      await openWhatsApp(updated.mobile, `Hello ${updated.customerName}, processing for your order (Slip: ${updated.slip}) has started.`);
+    }
+    if (allReady && !updated.notifiedReady) {
+      updated.notifiedReady = true;
+      await pushDoc('orders', updated);
+      await openWhatsApp(updated.mobile, `Good news ${updated.customerName}! Your clothes (Slip: ${updated.slip}) are ready for delivery.`);
+    }
+    render();
+  }
+
+  async function confirmDelivery(event) {
+    event.preventDefault();
+    const form = event.target;
+    const orderId = form.dataset.orderId;
+    const qty = num(form.deliverQty.value);
+    const paid = num(form.paid.value);
+    const idx = state.orders.findIndex((o) => o.id === orderId);
+    if (idx < 0) return;
+    let order = normalizeOrder(state.orders[idx]);
+    if (order.readyQty <= 0) return toast('This order is not processed yet. Complete processing before delivery.');
+    if (qty <= 0 || qty > order.readyQty) return toast('Invalid delivery quantity.');
+    let remaining = qty;
+    order.items = order.items.map((item) => {
+      if (remaining > 0 && item.status === 'ready') {
+        remaining -= 1;
+        return { ...item, status: 'delivered' };
+      }
+      return item;
+    });
+    order.deliveryPaidTotal = num(order.deliveryPaidTotal) + paid;
+    order.timeline = [...(order.timeline || []), { at: nowISO(), action: `Delivered ${qty} cloth, paid ${money(paid)}` }];
+    order.updatedAt = nowISO();
+    order = normalizeOrder(order);
+    state.orders[idx] = order;
+    const delivery = { id: uid(), orderId: order.id, slip: order.slip, customerName: order.customerName, mobile: order.mobile, qty, paid, dueAfter: order.due, createdAt: nowISO(), updatedAt: nowISO() };
+    state.deliveries.unshift(delivery);
+    await pushDoc('orders', order);
+    await pushDoc('deliveries', delivery);
+    await openWhatsApp(order.mobile, `Thank you ${order.customerName}! ${qty} cloth item(s) from your order (Slip: ${order.slip}) have been delivered. Due: ${money(order.due)}.`);
+    toast('Delivery confirmed.');
+    render();
+  }
+
+  async function addStaff(event) {
+    event.preventDefault();
+    const name = clean(event.target.name.value);
+    if (!name) return toast('Enter staff name.');
+    if (state.staff.some((s) => s.name.toLowerCase() === name.toLowerCase())) return toast('Staff already exists.');
+    const staff = { id: uid(), name, createdAt: nowISO(), updatedAt: nowISO() };
+    state.staff.unshift(staff);
+    await pushDoc('staff', staff);
+    state.selected.staffId = staff.id;
+    render();
+  }
+
+  function updateStaffTotal() {
+    const form = $('staffWorkForm');
+    if (!form) return;
+    let total = 0;
+    for (const wt of state.settings.workTypes) {
+      const qty = num(form.querySelector(`[data-work-qty="${CSS.escape(wt.id)}"]`)?.value);
+      const line = qty * num(wt.rate);
+      total += line;
+      const lineEl = $(`workLine_${wt.id}`);
+      if (lineEl) lineEl.textContent = money(line);
+    }
+    $('staffTotalPreview').textContent = money(total);
+  }
+
+  async function saveStaffWork(event) {
+    event.preventDefault();
+    const form = event.target;
+    const staff = state.staff.find((s) => s.id === form.dataset.staffId);
+    if (!staff) return toast('Select staff.');
+    const lines = [];
+    let total = 0;
+    for (const wt of state.settings.workTypes) {
+      const qty = num(form.querySelector(`[data-work-qty="${CSS.escape(wt.id)}"]`)?.value);
+      if (qty > 0) {
+        const amount = qty * num(wt.rate);
+        total += amount;
+        lines.push({ type: wt.type, rate: num(wt.rate), qty, amount });
+      }
+    }
+    if (!lines.length) return toast('Select at least one work quantity.');
+    const paid = num(form.paid.value);
+    if (paid < 0) return toast('Paid amount cannot be negative.');
+    const record = { id: uid(), staffId: staff.id, staffName: staff.name, date: todayISO(), lines, total, paid, balance: total - paid, summary: lines.map((x) => `${x.type} x${x.qty}`).join(', '), createdAt: nowISO(), updatedAt: nowISO() };
+    state.staffLedger.unshift(record);
+    await pushDoc('staffLedger', record);
+    toast('Staff work saved.');
+    render();
+  }
+
+  async function saveShopInfo(event) {
+    event.preventDefault();
+    const form = event.target;
+    state.settings.shopName = clean(form.shopName.value) || "Tailor's ERP";
+    state.settings.address = clean(form.address.value);
+    state.settings.phone = clean(form.phone.value);
+    state.settings.slipText = clean(form.slipText.value);
+    await saveSettings();
+    toast('Shop settings saved.');
+    render();
+  }
+
+  async function addMeasurement(event) {
+    event.preventDefault();
+    const label = clean(event.target.label.value);
+    if (!label) return;
+    if (state.settings.measurements.some((m) => m.toLowerCase() === label.toLowerCase())) return toast('Measurement already exists.');
+    state.settings.measurements.push(label);
+    await saveSettings();
+    render();
+  }
+
+  async function removeMeasurement(label) {
+    state.settings.measurements = state.settings.measurements.filter((m) => m !== label);
+    await saveSettings();
+    render();
+  }
+
+  async function addWorkType(event) {
+    event.preventDefault();
+    const type = clean(event.target.type.value);
+    const rate = num(event.target.rate.value);
+    if (!type || rate <= 0) return toast('Enter cloth type and rate.');
+    const existing = state.settings.workTypes.find((x) => x.type.toLowerCase() === type.toLowerCase());
+    if (existing) existing.rate = rate;
+    else state.settings.workTypes.push({ id: uid(), type, rate });
+    await saveSettings();
+    render();
+  }
+
+  async function removeWorkType(id) {
+    state.settings.workTypes = state.settings.workTypes.filter((x) => x.id !== id);
+    await saveSettings();
+    render();
+  }
+
+  function callCustomer(phone) {
+    if (!confirm(`Call customer ${phone}?`)) return;
+    location.href = `tel:${phone}`;
+  }
+
+  async function openWhatsApp(phone, text) {
+    const url = `https://api.whatsapp.com/send?phone=${encodeURIComponent(normalizePhone(phone).replace('+', ''))}&text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank', 'noopener');
+  }
+
+  function sendStatusWhatsApp(orderId) {
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) return;
+    const o = normalizeOrder(order);
+    const text = o.readyQty > 0 ? `Good news ${o.customerName}! Your clothes (Slip: ${o.slip}) are ready for delivery.` : `Hello ${o.customerName}, your order (Slip: ${o.slip}) is currently ${statusText(o.status)}.`;
+    openWhatsApp(o.mobile, text);
+  }
+
+  function viewOrder(orderId) {
+    const order = normalizeOrder(state.orders.find((o) => o.id === orderId));
+    if (!order) return;
+    showModal(`<div class="modal-head"><h3>Order Details</h3><div class="spacer"></div><button class="icon-btn light" data-close>×</button></div>
+      <div class="pdf-preview">${slipHtml(order)}</div>
+      <div class="card-actions"><button class="btn" data-slip="${order.id}">Share PDF</button><button class="btn secondary" data-call="${order.mobile}">Call</button></div>`);
+    bindBaseEvents();
+  }
+
+  function editOrderModal(orderId) {
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order) return;
+    showModal(`<div class="modal-head"><h3>Edit Order</h3><div class="spacer"></div><button class="icon-btn light" data-close>×</button></div>
+      <form id="editOrderForm" data-id="${esc(order.id)}" class="form-grid">
+        <input name="customerName" value="${esc(order.customerName)}" placeholder="Customer name" />
+        <input name="mobile" value="${esc(order.mobile)}" placeholder="Mobile" />
+        <input name="bill" value="${esc(order.bill)}" inputmode="decimal" placeholder="Bill" />
+        <input name="advance" value="${esc(order.advance)}" inputmode="decimal" placeholder="Advance" />
+        <button class="btn" type="submit">Save Edit</button>
+      </form>`);
+    $('editOrderForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.target;
+      const idx = state.orders.findIndex((o) => o.id === form.dataset.id);
+      if (idx < 0) return;
+      let updated = { ...state.orders[idx], customerName: clean(form.customerName.value), mobile: normalizePhone(form.mobile.value), bill: num(form.bill.value), advance: num(form.advance.value), updatedAt: nowISO() };
+      updated = normalizeOrder(updated);
+      state.orders[idx] = updated;
+      await pushDoc('orders', updated);
+      closeModal();
+      render();
+    });
+  }
+
+  function slipHtml(order) {
+    const m = Object.entries(order.measurements || {}).filter(([, v]) => clean(v)).map(([k, v]) => `<div>${esc(k)}: ${esc(v)}</div>`).join('') || '<div>No measurement recorded.</div>';
+    return `<h2>${esc(state.settings.shopName || "Tailor's ERP")}</h2>
+      <div>${esc(state.settings.address || '')}</div><div>${esc(state.settings.phone || '')}</div><hr>
+      <b>Slip No:</b> ${esc(order.slip)}<br><b>Date:</b> ${fmtDate(order.createdAt)}<br><b>Customer:</b> ${esc(order.customerName)}<br><b>Mobile:</b> ${esc(order.mobile)}<br><b>Clothes:</b> ${order.clothQty}<br><b>Status:</b> ${statusText(order.status)}<hr>
+      <b>Measurements</b>${m}<hr><b>Total:</b> ${money(order.bill)}<br><b>Advance:</b> ${money(order.advance)}<br><b>Due:</b> ${money(order.due)}<hr><div>${esc(state.settings.slipText || '')}</div>`;
+  }
+
+  async function shareSlipById(orderId) {
+    const order = state.orders.find((o) => o.id === orderId);
+    if (order) await shareSlip(normalizeOrder(order));
+  }
+
+  async function shareSlip(order) {
+    const blob = createPdfBlob(order);
+    const fileName = `Slip_${order.slip}.pdf`.replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const file = new File([blob], fileName, { type: 'application/pdf' });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ title: `Order Slip ${order.slip}`, text: `PDF slip for order ${order.slip}`, files: [file] });
+      } else {
+        downloadBlob(blob, fileName);
+        toast('PDF downloaded. Share it from downloads.');
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        downloadBlob(blob, fileName);
+        toast('PDF downloaded. Share it from downloads.');
+      }
+    }
+  }
+
+  function pdfSafe(value) {
+    return String(value ?? '').replace(/[^\x20-\x7E]/g, '?').replace(/[()\\]/g, (c) => `\\${c}`);
+  }
+
+  function createPdfBlob(order) {
+    const lines = [
+      state.settings.shopName || "Tailor's ERP",
+      state.settings.address || '',
+      state.settings.phone ? `Phone: ${state.settings.phone}` : '',
+      '----------------------------------------',
+      `Slip No: ${order.slip}`,
+      `Date: ${fmtDate(order.createdAt)}`,
+      `Customer: ${order.customerName}`,
+      `Mobile: ${order.mobile}`,
+      `Clothes: ${order.clothQty}`,
+      `Status: ${statusText(order.status)}`,
+      'Measurements:'
+    ].filter(Boolean);
+    for (const [key, value] of Object.entries(order.measurements || {})) lines.push(`  ${key}: ${value || '-'}`);
+    lines.push('----------------------------------------', `Total Bill: ${money(order.bill)}`, `Advance: ${money(order.advance)}`, `Due: ${money(order.due)}`, '----------------------------------------', state.settings.slipText || 'Thank you.');
+    const content = ['BT', '/F1 13 Tf', '50 800 Td'];
+    lines.forEach((line, index) => {
+      if (index > 0) content.push('0 -18 Td');
+      content.push(`(${pdfSafe(line)}) Tj`);
+    });
+    content.push('ET');
+    const stream = content.join('\n');
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`
+    ];
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    objects.forEach((obj, i) => {
+      offsets.push(pdf.length);
+      pdf += `${i + 1} 0 obj\n${obj}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    offsets.slice(1).forEach((off) => { pdf += `${String(off).padStart(10, '0')} 00000 n \n`; });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    return new Blob([pdf], { type: 'application/pdf' });
+  }
+
+  function downloadBlob(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportBackup() {
+    const backup = { version: VERSION, exportedAt: nowISO(), settings: state.settings, orders: state.orders, staff: state.staff, staffLedger: state.staffLedger, deliveries: state.deliveries };
+    downloadBlob(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }), `tailor_erp_backup_${todayISO()}.json`);
+  }
+
+  function importBackup() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const data = JSON.parse(await file.text());
+      state.settings = { ...deepClone(DEFAULT_SETTINGS), ...(data.settings || {}) };
+      state.orders = (data.orders || []).map(normalizeOrder);
+      state.staff = data.staff || [];
+      state.staffLedger = data.staffLedger || [];
+      state.deliveries = data.deliveries || [];
+      persistLocal();
+      await saveSettings();
+      await Promise.all(state.orders.map((o) => pushDoc('orders', o)));
+      toast('Backup imported.');
+      render();
+    };
+    input.click();
+  }
+
+  async function resetData() {
+    const pin = prompt('Owner PIN required. Enter PIN:');
+    if (!pin || !state.profile) return;
+    const hash = await sha256(`${state.profile.uid}:${pin}`);
+    if (hash !== state.profile.pinHash || state.profile.role !== 'Owner') return toast('Only Owner PIN can reset data.');
+    const confirmText = prompt('Type CONFIRM to delete local data:');
+    if (confirmText !== 'CONFIRM') return;
+    state.orders = [];
+    state.staff = [];
+    state.staffLedger = [];
+    state.deliveries = [];
+    persistLocal();
+    toast('Local data reset. Cloud old data may still exist unless deleted from Firebase.');
+    render();
+  }
+
+  function showModal(html) {
+    modalRoot().innerHTML = `<div class="modal-layer"><div class="modal">${html}</div></div>`;
+    bindBaseEvents();
+  }
+
+  function closeModal() {
+    modalRoot().innerHTML = '';
+  }
+
+  async function init() {
+    loadLocal();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => null);
+    await initFirebase();
+    state.ready = true;
+    render();
+  }
+
   return { init };
 })();
 
-document.addEventListener('DOMContentLoaded', App.init);
+window.addEventListener('DOMContentLoaded', () => TailorERP.init());
