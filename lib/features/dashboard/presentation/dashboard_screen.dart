@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-import '../../../auth/domain/app_role.dart';
-import '../../../auth/presentation/auth_controller.dart';
+import '../../auth/domain/app_role.dart';
+import '../../auth/presentation/auth_controller.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({required this.controller, super.key});
