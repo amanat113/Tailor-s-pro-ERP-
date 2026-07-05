@@ -17,7 +17,7 @@ class FirebaseBootstrap {
     if (!FirebaseEnvironment.isConfigured) {
       return const FirebaseStatus(
         enabled: false,
-        message: 'Offline demo mode: Firebase config not provided.',
+        message: 'Firebase config missing. Real OTP login is blocked until Firebase is configured.',
       );
     }
 
@@ -31,7 +31,7 @@ class FirebaseBootstrap {
     } on Object catch (error) {
       return FirebaseStatus(
         enabled: false,
-        message: 'Firebase failed, offline fallback active: $error',
+        message: 'Firebase failed to initialize: $error',
       );
     }
   }

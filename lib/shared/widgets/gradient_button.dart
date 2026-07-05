@@ -24,8 +24,13 @@ class GradientButton extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           gradient: enabled
-              ? const LinearGradient(colors: <Color>[Color(0xFF38BDF8), Color(0xFF6366F1)])
-              : const LinearGradient(colors: <Color>[Color(0xFF475569), Color(0xFF334155)]),
+              ? const LinearGradient(colors: <Color>[Color(0xFF1E3557), Color(0xFFC69A5B)])
+              : const LinearGradient(colors: <Color>[Color(0xFF98A2B3), Color(0xFF667085)]),
+          boxShadow: enabled
+              ? const <BoxShadow>[
+                  BoxShadow(color: Color(0x332A1B04), blurRadius: 18, offset: Offset(0, 10)),
+                ]
+              : const <BoxShadow>[],
         ),
         child: ElevatedButton.icon(
           onPressed: enabled ? onPressed : null,
@@ -36,7 +41,7 @@ class GradientButton extends StatelessWidget {
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 )
               : Icon(icon ?? Icons.lock_open_rounded, color: Colors.white),
-          label: Text(label, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          label: Text(label, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
           style: ElevatedButton.styleFrom(
             elevation: 0,
             backgroundColor: Colors.transparent,

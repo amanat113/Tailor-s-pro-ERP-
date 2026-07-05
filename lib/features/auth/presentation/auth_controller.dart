@@ -123,9 +123,7 @@ class AuthController extends ChangeNotifier {
               loading: false,
               mobile: mobile,
               verificationId: verificationId,
-              info: repository.isFirebaseEnabled
-                  ? 'OTP sent to $mobile.'
-                  : 'Offline demo OTP is 123456.',
+              info: 'OTP sent to $mobile.',
             ),
           );
         },

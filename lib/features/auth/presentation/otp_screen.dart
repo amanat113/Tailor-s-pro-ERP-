@@ -41,7 +41,7 @@ class _OtpScreenState extends State<OtpScreen> {
             const SizedBox(height: 12),
             const Text('Verify OTP', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Text('OTP sent to ${state.mobile}', style: const TextStyle(color: Color(0xFFB9C6D8))),
+            Text('OTP sent to ${state.mobile}', style: const TextStyle(color: Color(0xFF697386))),
             const SizedBox(height: 22),
             MessageBanner(error: state.error, info: state.info),
             TextField(

@@ -11,7 +11,7 @@ class ScreenFrame extends StatelessWidget {
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: <Color>[Color(0xFF0B1B31), Color(0xFF06101F), Color(0xFF020617)],
+            colors: <Color>[Color(0xFFF8F4ED), Color(0xFFF1F6F8), Color(0xFFEFE7DB)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),

@@ -46,12 +46,9 @@ class AuthRepository {
     final normalized = Validators.normalizeIndianMobile(mobile);
 
     if (!isFirebaseEnabled) {
-      const offlineVerificationId = 'offline-demo-verification-id';
-      scheduleMicrotask(() => codeSent(offlineVerificationId));
-      return const OtpRequestResult(
-        verificationId: offlineVerificationId,
-        isFirebase: false,
-      );
+      const message = 'Firebase is not configured. Real mobile OTP needs Firebase project setup first.';
+      scheduleMicrotask(() => failed(message));
+      throw StateError(message);
     }
 
     final completer = Completer<OtpRequestResult>();
@@ -97,10 +94,7 @@ class AuthRepository {
     final normalized = Validators.normalizeIndianMobile(mobile);
 
     if (!isFirebaseOtp || !isFirebaseEnabled) {
-      if (otp != '123456') {
-        throw StateError('Invalid demo OTP. Use 123456 for offline mode.');
-      }
-      return VerifiedIdentity(uid: 'offline_${normalized.replaceAll('+', '')}', mobile: normalized);
+      throw StateError('Real Firebase OTP verification is required. Demo OTP is disabled.');
     }
 
     final credential = firebase_auth.PhoneAuthProvider.credential(

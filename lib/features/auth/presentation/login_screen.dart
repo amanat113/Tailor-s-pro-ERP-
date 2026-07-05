@@ -46,7 +46,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 8),
                 const Text(
                   'Professional Tailoring & Garment Management',
-                  style: TextStyle(fontSize: 16, color: Color(0xFFB9C6D8)),
+                  style: TextStyle(fontSize: 16, color: Color(0xFF697386)),
                 ),
                 const SizedBox(height: 24),
                 MessageBanner(error: state.error, info: state.info),
@@ -74,8 +74,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Firebase OTP will be used when configured. Without Firebase config, app runs in offline demo mode.',
-                  style: TextStyle(color: Color(0xFF93A4BA), height: 1.45),
+                  'Real Firebase Mobile OTP is required. Demo login is disabled.',
+                  style: TextStyle(color: Color(0xFF697386), height: 1.45, fontWeight: FontWeight.w700),
                 ),
               ],
             ),

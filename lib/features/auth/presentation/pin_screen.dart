@@ -38,7 +38,7 @@ class _PinScreenState extends State<PinScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Icon(Icons.lock_rounded, size: 48, color: Color(0xFF38BDF8)),
+            const Icon(Icons.lock_rounded, size: 48, color: Color(0xFFC69A5B)),
             const SizedBox(height: 18),
             Text(title, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
@@ -46,7 +46,7 @@ class _PinScreenState extends State<PinScreen> {
               widget.isSetup
                   ? 'Create a 4 to 8 digit PIN for this mobile number.'
                   : 'Use your saved PIN to continue.',
-              style: const TextStyle(color: Color(0xFFB9C6D8)),
+              style: const TextStyle(color: Color(0xFF697386)),
             ),
             const SizedBox(height: 22),
             MessageBanner(error: state.error, info: state.info),

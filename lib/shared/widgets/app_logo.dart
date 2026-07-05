@@ -11,12 +11,12 @@ class AppLogo extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
         gradient: const LinearGradient(
-          colors: <Color>[Color(0xFF38BDF8), Color(0xFF6366F1)],
+          colors: <Color>[Color(0xFF1E3557), Color(0xFFC69A5B)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         boxShadow: const <BoxShadow>[
-          BoxShadow(color: Color(0x5538BDF8), blurRadius: 30, offset: Offset(0, 16)),
+          BoxShadow(color: Color(0x332A1B04), blurRadius: 28, offset: Offset(0, 16)),
         ],
       ),
       alignment: Alignment.center,

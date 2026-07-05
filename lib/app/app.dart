@@ -55,7 +55,7 @@ class _TailorsErpAppState extends State<TailorsErpApp>
             debugShowCheckedModeBanner: false,
             theme: AppTheme.light(),
             darkTheme: AppTheme.dark(),
-            themeMode: ThemeMode.dark,
+            themeMode: ThemeMode.light,
             home: _screenFor(widget.controller),
           ),
         );

@@ -27,13 +27,13 @@ class _RoleScreenState extends State<RoleScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            const Icon(Icons.admin_panel_settings_rounded, size: 52, color: Color(0xFF8B5CF6)),
+            const Icon(Icons.admin_panel_settings_rounded, size: 52, color: Color(0xFFC69A5B)),
             const SizedBox(height: 18),
             const Text('Select Role', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
             const Text(
               'Role controls permissions inside the app.',
-              style: TextStyle(color: Color(0xFFB9C6D8)),
+              style: TextStyle(color: Color(0xFF697386)),
             ),
             const SizedBox(height: 22),
             MessageBanner(error: state.error, info: state.info),

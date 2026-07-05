@@ -1,58 +1,57 @@
 # Tailor's ERP
 
-Professional Flutter Android app base for a tailoring and garment management system.
+Professional Flutter Android app base for a real tailoring and garment management system.
 
-## Phase 1 included
+## Phase 2A included
 
-- Mobile OTP login flow with offline demo fallback
-- Secure PIN setup and PIN login
+- Real Firebase Mobile OTP only; demo OTP is disabled
+- Secure PIN setup and PIN login after OTP
 - Owner / Manager / Staff role selection
 - Owner and Manager inactivity auto-logout logic
 - Staff 24-hour session policy
-- Firebase-ready architecture
-- Offline-first local storage fallback
-- Professional dark mobile dashboard UI
+- Professional light premium UI rebuild
+- Compact dashboard metrics
+- Sidebar drawer with three-line menu
+- Floating island bottom navigation
+- Recent Orders section from real Cloud Firestore data
+- Real new order creation to Firestore
+- Duplicate slip number validation
+- Real edit order bottom sheet
+- Real call confirmation using Android phone dialer
 - GitHub Actions APK build workflow
-- Codemagic APK build workflow
 
-## Demo login without Firebase
+## Required Firebase setup
 
-- Mobile: any valid 10 digit number
-- OTP: `123456`
-- PIN: any 4 to 8 digit PIN
-- Role: Owner / Manager / Staff
+This app does not use fake/demo login. To login, configure Firebase Auth phone provider and Firestore.
 
-## Build locally
+Build with dart-define values:
 
 ```bash
-flutter pub get
-flutter build apk --release
-```
-
-The APK will be available at:
-
-```text
-build/app/outputs/flutter-apk/app-release.apk
-```
-
-## GitHub Actions build
-
-Open the repository in GitHub:
-
-1. Go to **Actions**
-2. Open **Build Tailor's ERP Android APK**
-3. Tap **Run workflow**
-4. Download artifact: `tailors-erp-release-apk`
-
-## Firebase dart-define config later
-
-The app runs without Firebase in offline demo mode. Later, pass Firebase values using `--dart-define` keys:
-
-```bash
-flutter build apk --release \
+flutter build apk --debug \
   --dart-define=FIREBASE_API_KEY=your_api_key \
   --dart-define=FIREBASE_APP_ID_ANDROID=your_android_app_id \
   --dart-define=FIREBASE_MESSAGING_SENDER_ID=your_sender_id \
   --dart-define=FIREBASE_PROJECT_ID=your_project_id \
   --dart-define=FIREBASE_STORAGE_BUCKET=your_storage_bucket
+```
+
+## Firestore path used
+
+```text
+shops/default_shop/orders
+shops/default_shop/users
+shops/default_shop/auditLogs
+```
+
+## Build locally
+
+```bash
+flutter pub get
+flutter build apk --debug
+```
+
+APK path:
+
+```text
+build/app/outputs/flutter-apk/app-debug.apk
 ```
