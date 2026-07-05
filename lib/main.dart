@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
@@ -19,8 +20,19 @@ import 'package:url_launcher/url_launcher.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final appState = AppState();
-  await appState.bootstrap();
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    appState.reportFatal(details.exception, details.stack);
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    appState.reportFatal(error, stack);
+    return true;
+  };
+
   runApp(TailorsErpApp(appState: appState));
+  unawaited(appState.bootstrap());
 }
 
 class AppTheme {
@@ -146,10 +158,18 @@ class AppState extends ChangeNotifier {
   bool pinVerified = false;
   DateTime lastActiveAt = DateTime.now();
   Timer? _securityTimer;
+  String? fatalError;
 
   FirebaseFirestore get db => FirebaseFirestore.instance;
   FirebaseAuth get auth => FirebaseAuth.instance;
   DocumentReference<Map<String, dynamic>> get shop => db.collection('shops').doc('default_shop');
+
+  void reportFatal(Object error, StackTrace? stack) {
+    final message = error.toString();
+    if (fatalError == message) return;
+    fatalError = message;
+    scheduleMicrotask(notifyListeners);
+  }
 
   Future<void> bootstrap() async {
     try {
@@ -167,7 +187,7 @@ class AppState extends ChangeNotifier {
       firebaseMessage = 'Firebase connected';
     } catch (e) {
       firebaseReady = false;
-      firebaseMessage = 'Firebase config missing. Upload google-services.json and rebuild APK.';
+      firebaseMessage = 'Firebase could not start: $e';
     }
     firebaseUser = firebaseReady ? auth.currentUser : null;
     _securityTimer?.cancel();
@@ -331,11 +351,50 @@ class _RootShellState extends State<RootShell> {
   @override
   Widget build(BuildContext context) {
     final app = widget.appState;
+    if (app.fatalError != null) return CrashSafeScreen(appState: app);
     if (!app.firebaseReady) return SetupBlockedScreen(appState: app);
     if (app.firebaseUser == null) return LoginScreen(appState: app);
     if (!app.pinVerified) return PinGateScreen(appState: app);
     if (app.role == UserRole.select) return RoleScreen(appState: app);
     return GestureDetector(onTap: app.touch, onPanDown: (_) => app.touch(), child: HomeShell(appState: app));
+  }
+}
+
+class CrashSafeScreen extends StatelessWidget {
+  const CrashSafeScreen({required this.appState, super.key});
+  final AppState appState;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: AppCard(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.bug_report_rounded, size: 54, color: AppTheme.red),
+                  const SizedBox(height: 18),
+                  const Text('Startup protected', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 10),
+                  const Text('The app caught an internal error instead of closing. Send this message to the developer.', style: TextStyle(color: AppTheme.muted, height: 1.45)),
+                  const SizedBox(height: 12),
+                  SelectableText(appState.fatalError ?? 'Unknown error', style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.red)),
+                  const SizedBox(height: 20),
+                  PrimaryButton(label: 'Restart App State', icon: Icons.refresh_rounded, onPressed: () {
+                    appState.fatalError = null;
+                    appState.bootstrap();
+                  }),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

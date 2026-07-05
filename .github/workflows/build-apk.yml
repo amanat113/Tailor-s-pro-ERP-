@@ -35,7 +35,7 @@ jobs:
       - name: Create or repair Android project
         run: flutter create --platforms=android --project-name tailors_erp --org com.tailors --overwrite .
 
-      - name: Force Android package name
+      - name: Force Android package name and permissions
         shell: bash
         run: |
           set -euo pipefail
@@ -66,6 +66,25 @@ jobs:
               text = manifest.read_text()
               text = text.replace('android:label="tailors_erp"', 'android:label="Tailor\'s ERP"')
               text = text.replace('android:label="Tailors_erp"', 'android:label="Tailor\'s ERP"')
+              perms = [
+                  '<uses-permission android:name="android.permission.INTERNET" />',
+                  '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />'
+              ]
+              for perm in perms:
+                  if perm not in text:
+                      text = text.replace('<manifest xmlns:android="http://schemas.android.com/apk/res/android">', '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    ' + perm, 1)
+              if '<queries>' not in text:
+                  text = text.replace('</manifest>', '''    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+            <data android:scheme="tel" />
+        </intent>
+    </queries>
+</manifest>''')
               manifest.write_text(text)
           PY
 
